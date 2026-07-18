@@ -14,6 +14,7 @@ const state = {
   markers: new Map(),
   lastSeenIds: new Set(),
   lastRefreshAt: null,
+  hasInitialized: false,
 };
 
 const els = {
@@ -210,13 +211,14 @@ async function fetchQuakes() {
 
   for (const quake of quakes) {
     const isNew = !state.lastSeenIds.has(quake.id);
-    if (isNew && shouldTriggerAlert(quake)) {
+    if (state.hasInitialized && isNew && shouldTriggerAlert(quake)) {
       triggerAlert(quake);
     }
   }
 
   state.lastSeenIds = new Set(quakes.map((q) => q.id));
   state.lastRefreshAt = Date.now();
+  state.hasInitialized = true;
   setStatus("En línea", "#34d399");
 }
 
