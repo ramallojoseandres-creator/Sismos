@@ -147,6 +147,14 @@ h3 {
   border-radius: 7px;
 }
 
+.alert-controls select {
+  border: 1px solid #2b3d65;
+  background: #0f1a2d;
+  color: var(--text);
+  padding: 0.4rem 0.5rem;
+  border-radius: 7px;
+}
+
 .warning-note {
   margin: 0.8rem 1rem;
   padding: 0.7rem;
@@ -155,6 +163,12 @@ h3 {
   border-radius: 9px;
   color: #f7ddb1;
   font-size: 0.82rem;
+}
+
+.source-note {
+  margin: 0.2rem 1rem 0.7rem;
+  font-size: 0.8rem;
+  color: var(--muted);
 }
 
 .quake-list {

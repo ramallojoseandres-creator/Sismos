@@ -3,10 +3,16 @@
 App web de monitoreo sísmico en tiempo real inspirada en GlobalQuake:
 
 - Mapa mundial con eventos recientes.
-- Lista de sismos de la última hora (feed público USGS).
+- Lista de sismos consolidada desde múltiples fuentes:
+  - USGS,
+  - EMSC (SeismicPortal),
+  - feed regional opcional configurable.
+- Backend Node.js con WebSocket para fan-out de alertas en tiempo real.
+- Geocercas por estado de Venezuela para clasificar eventos nacionales.
 - Regla de alerta configurable para Venezuela:
   - magnitud mínima,
   - distancia máxima a Caracas,
+  - estado prioritario,
   - alerta visual/sonora y notificación del navegador.
 
 > Importante: esto **no reemplaza** un sistema oficial de alerta temprana por
@@ -15,28 +21,56 @@ App web de monitoreo sísmico en tiempo real inspirada en GlobalQuake:
 
 ## Ejecutar localmente
 
-Como es una SPA estática, puedes levantarla con cualquier servidor HTTP.
-
-### Opción rápida con Python
+### 1) Instalar dependencias
 
 ```bash
-python3 -m http.server 8080
+npm install
 ```
 
-Luego abre:
+### 2) (Opcional) configurar feed regional y umbrales de alerta del backend
+
+```bash
+export REGIONAL_FEED_URL="https://tu-feed-regional/earthquakes.geojson"
+export ALERT_MIN_MAG=4.0
+export ALERT_MAX_DISTANCE_KM=1200
+export REFRESH_MS=30000
+```
+
+### 3) Iniciar servidor
+
+```bash
+npm start
+```
+
+Abre:
 
 ```txt
 http://localhost:8080
 ```
 
-## Fuente de datos
+## Arquitectura rápida
 
-- USGS GeoJSON feed (última hora):
+- `server.js`
+  - sirve frontend estático,
+  - expone `/api/earthquakes` y `/api/geofences/venezuela`,
+  - publica eventos por WebSocket (`/ws`).
+- `earthquake-service.js`
+  - consulta fuentes sísmicas,
+  - normaliza y deduplica eventos,
+  - calcula estado de Venezuela por geocerca,
+  - decide alertas de backend para fan-out.
+- `venezuela-states.js`
+  - geocercas simplificadas por estado.
+
+## Fuentes
+
+- USGS GeoJSON (última hora):
   `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson`
+- EMSC / SeismicPortal:
+  `https://www.seismicportal.eu/fdsnws/event/1/query?limit=100&format=json`
+- Regional (opcional):
+  `REGIONAL_FEED_URL` (formato GeoJSON compatible).
 
-## Ideas para mejorar
+## Próximas mejoras
 
-- Integrar más fuentes (EMSC, redes regionales).
-- Agregar backend con WebSocket para fan-out de alertas.
-- Implementar geocercas por estado en Venezuela.
 - Soporte PWA y notificaciones push.

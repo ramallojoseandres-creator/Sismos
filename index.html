@@ -63,12 +63,23 @@
             Distancia máxima a Caracas (km):
             <input id="distance-threshold" type="number" min="50" max="2500" step="50" value="1200" />
           </label>
+          <label>
+            Estado prioritario:
+            <select id="state-filter">
+              <option value="">Todos</option>
+            </select>
+          </label>
         </div>
 
         <div class="warning-note">
           <strong>Nota importante:</strong> esto es una alerta rápida de
-          eventos ya detectados por redes públicas (USGS), no reemplaza un
+          eventos ya detectados por redes públicas (USGS/EMSC), no reemplaza un
           sistema oficial de alerta temprana por ondas P con sensores locales.
+        </div>
+
+        <div class="source-note">
+          Fuentes activas:
+          <span id="sources-text">Cargando…</span>
         </div>
 
         <ul id="quake-list" class="quake-list" aria-live="polite"></ul>
