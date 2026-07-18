@@ -15,6 +15,7 @@ const els = {
   metricHigh: document.getElementById("metric-high"),
   lastEventText: document.getElementById("last-event-text"),
   streamRateText: document.getElementById("stream-rate-text"),
+  fastCountText: document.getElementById("fast-count-text"),
   autofocusToggle: document.getElementById("autofocus-toggle"),
   forceRefresh: document.getElementById("force-refresh"),
   magnitudeThreshold: document.getElementById("magnitude-threshold"),
@@ -31,6 +32,7 @@ const state = {
   hasReceivedInitialSnapshot: false,
   alertedQuakeIds: new Set(),
   recentEventTimes: [],
+  fastSeenIds: new Set(),
 };
 
 const map = L.map("map", {
@@ -111,6 +113,18 @@ function updateMonitorHeader(lastQuake) {
 function appendLiveFeed(text) {
   const li = document.createElement("li");
   li.textContent = text;
+  els.liveFeed.prepend(li);
+  while (els.liveFeed.children.length > 14) {
+    els.liveFeed.removeChild(els.liveFeed.lastChild);
+  }
+}
+
+function appendFastFeed(quake) {
+  const li = document.createElement("li");
+  li.className = "fast-item";
+  li.textContent =
+    `⚡ PRE-ALERTA ${new Date(quake.time).toLocaleTimeString()} · ` +
+    `M ${quake.mag.toFixed(1)} · ${quake.place}`;
   els.liveFeed.prepend(li);
   while (els.liveFeed.children.length > 14) {
     els.liveFeed.removeChild(els.liveFeed.lastChild);
@@ -282,6 +296,20 @@ function onNewQuakes(newQuakes) {
   }
 }
 
+function onFastPreAlerts(prealerts) {
+  for (const quake of prealerts) {
+    if (state.fastSeenIds.has(quake.id)) continue;
+    state.fastSeenIds.add(quake.id);
+    appendFastFeed(quake);
+    drawPulse(quake);
+    if (els.autofocusToggle.checked) {
+      map.flyTo([quake.lat, quake.lon], Math.max(map.getZoom(), 5), {
+        duration: 1.1,
+      });
+    }
+  }
+}
+
 async function fetchSnapshot() {
   setStatus("Sincronizando snapshot…", "#fbbf24");
   const response = await fetch(API_SNAPSHOT, { cache: "no-store" });
@@ -325,6 +353,11 @@ function connectWebSocket() {
           triggerAlert(message.data);
           state.alertedQuakeIds.add(quake.id);
         }
+      } else if (message.type === "fast_status") {
+        const count = Number(message.data?.prealertsLastMinute || 0);
+        els.fastCountText.textContent = `${count} activas`;
+      } else if (message.type === "fast_prealert") {
+        onFastPreAlerts(message.data || []);
       } else if (message.type === "error") {
         setStatus("Error en fuentes sísmicas", "#fb7185");
       }

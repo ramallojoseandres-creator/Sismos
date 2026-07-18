@@ -12,6 +12,8 @@ const USGS_HOURLY_FEED =
   "https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson";
 const EMSC_FEED =
   "https://www.seismicportal.eu/fdsnws/event/1/query?limit=100&format=json";
+const EMSC_FAST_FEED =
+  "https://www.seismicportal.eu/fdsnws/event/1/query?limit=40&format=json";
 
 function distanceKm(lat1, lon1, lat2, lon2) {
   const toRad = (d) => (d * Math.PI) / 180;
@@ -105,6 +107,13 @@ async function fetchEmsc() {
     .filter(Boolean);
 }
 
+async function fetchEmscFast() {
+  const payload = await fetchJson(EMSC_FAST_FEED);
+  return (payload.features || [])
+    .map((feature) => normalizeGeoJsonFeature(feature, "emsc-fast"))
+    .filter(Boolean);
+}
+
 async function fetchRegional() {
   if (!process.env.REGIONAL_FEED_URL) return [];
   const payload = await fetchJson(process.env.REGIONAL_FEED_URL);
@@ -170,6 +179,8 @@ class EarthquakeService {
       sources: DEFAULT_SOURCES,
     };
     this.lastIds = new Set();
+    this.fastSeenIds = new Set();
+    this.fastState = { updatedAt: null, prealertsLastMinute: 0, sourceErrors: [] };
   }
 
   async refresh() {
@@ -206,6 +217,50 @@ class EarthquakeService {
     };
 
     return { snapshot: this.snapshot, newQuakes, alerts };
+  }
+
+  async refreshFastLane() {
+    const now = Date.now();
+    const minMag = Number(process.env.PREALERT_MIN_MAG || 3.8);
+    const maxDistance = Number(process.env.PREALERT_MAX_DISTANCE_KM || 1700);
+    try {
+      const fast = await fetchEmscFast();
+      const recent = fast.filter((q) => now - q.time <= 20 * 60_000);
+      const candidates = recent.filter(
+        (q) =>
+          q.mag >= minMag &&
+          (Boolean(q.venezuelaState) || q.distanceToCaracasKm <= maxDistance)
+      );
+      const newPreAlerts = candidates
+        .filter((q) => !this.fastSeenIds.has(q.id))
+        .map((q) => ({
+          ...q,
+          source: "emsc-fast",
+          confidence: "preliminar",
+          channel: "fast-prealert",
+        }));
+
+      for (const quake of candidates) {
+        this.fastSeenIds.add(quake.id);
+      }
+      if (this.fastSeenIds.size > 2000) {
+        this.fastSeenIds = new Set(Array.from(this.fastSeenIds).slice(-1200));
+      }
+
+      this.fastState = {
+        updatedAt: now,
+        prealertsLastMinute: candidates.filter((q) => now - q.time <= 60_000).length,
+        sourceErrors: [],
+      };
+      return { fastPreAlerts: newPreAlerts, fastState: this.fastState };
+    } catch (error) {
+      this.fastState = {
+        updatedAt: now,
+        prealertsLastMinute: 0,
+        sourceErrors: [error.message || String(error)],
+      };
+      return { fastPreAlerts: [], fastState: this.fastState };
+    }
   }
 }
 

@@ -236,6 +236,10 @@ h3 {
   color: #d9e8ff;
 }
 
+.live-feed li.fast-item {
+  color: #facc15;
+}
+
 .live-feed li:last-child {
   border-bottom: none;
 }

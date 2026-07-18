@@ -7,6 +7,7 @@ const { VENEZUELA_STATE_GEOFENCES } = require("./venezuela-states");
 
 const PORT = Number(process.env.PORT || 8080);
 const REFRESH_MS = Number(process.env.REFRESH_MS || 30_000);
+const FAST_REFRESH_MS = Number(process.env.FAST_REFRESH_MS || 7_000);
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -88,6 +89,12 @@ wss.on("connection", (socket) => {
       data: earthquakeService.snapshot,
     })
   );
+  socket.send(
+    JSON.stringify({
+      type: "fast_status",
+      data: earthquakeService.fastState,
+    })
+  );
 });
 
 async function refreshAndBroadcast() {
@@ -111,9 +118,26 @@ async function refreshAndBroadcast() {
   }
 }
 
+async function refreshFastAndBroadcast() {
+  try {
+    const { fastPreAlerts, fastState } = await earthquakeService.refreshFastLane();
+    broadcast({ type: "fast_status", data: fastState });
+    if (fastPreAlerts.length > 0) {
+      broadcast({ type: "fast_prealert", data: fastPreAlerts });
+    }
+  } catch (err) {
+    broadcast({
+      type: "error",
+      data: { message: err.message || String(err) },
+    });
+  }
+}
+
 server.listen(PORT, () => {
   // eslint-disable-next-line no-console
   console.log(`Sismos app en http://localhost:${PORT}`);
   refreshAndBroadcast();
+  refreshFastAndBroadcast();
   setInterval(refreshAndBroadcast, REFRESH_MS);
+  setInterval(refreshFastAndBroadcast, FAST_REFRESH_MS);
 });

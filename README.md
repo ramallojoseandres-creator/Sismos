@@ -13,6 +13,9 @@ App web de monitoreo sísmico en tiempo real inspirada en GlobalQuake:
   - feed en tiempo real,
   - resaltado/pulso de eventos nuevos en mapa,
   - autoenfoque opcional en eventos relevantes.
+- Carril rápido de pre-alerta:
+  - sondeo rápido EMSC (`emsc-fast`) para avisos preliminares,
+  - emisión WebSocket `fast_prealert` y estado `fast_status`.
 - Regla de alerta configurable para Venezuela:
   - magnitud mínima,
   - distancia máxima a Caracas,
@@ -38,6 +41,9 @@ export REGIONAL_FEED_URL="https://tu-feed-regional/earthquakes.geojson"
 export ALERT_MIN_MAG=4.0
 export ALERT_MAX_DISTANCE_KM=1200
 export REFRESH_MS=30000
+export FAST_REFRESH_MS=7000
+export PREALERT_MIN_MAG=3.8
+export PREALERT_MAX_DISTANCE_KM=1700
 ```
 
 ### 3) Iniciar servidor
