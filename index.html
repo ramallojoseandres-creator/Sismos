@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Alerta Sísmica Global | Venezuela</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>Alerta Temprana de Sismos</h1>
+      <p class="subtitle">
+        Monitoreo global en tiempo real y alertas prioritarias para Venezuela
+      </p>
+    </header>
+
+    <main class="layout">
+      <section class="panel map-panel">
+        <div class="panel-top">
+          <h2>Mapa mundial</h2>
+          <div class="status-wrap">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Conectando…</span>
+          </div>
+        </div>
+        <div id="map"></div>
+      </section>
+
+      <aside class="panel side-panel">
+        <div class="panel-top">
+          <h2>Sismos recientes</h2>
+          <button id="force-refresh" type="button">Actualizar</button>
+        </div>
+
+        <div class="metrics">
+          <div class="metric">
+            <span class="label">Global última hora</span>
+            <strong id="metric-global">0</strong>
+          </div>
+          <div class="metric">
+            <span class="label">Zona Venezuela</span>
+            <strong id="metric-venezuela">0</strong>
+          </div>
+          <div class="metric">
+            <span class="label">Alerta alta (M≥5)</span>
+            <strong id="metric-high">0</strong>
+          </div>
+        </div>
+
+        <div class="alert-controls">
+          <h3>Regla de alerta Venezuela</h3>
+          <label>
+            Magnitud mínima:
+            <input id="magnitude-threshold" type="number" min="2" max="9" step="0.1" value="4.0" />
+          </label>
+          <label>
+            Distancia máxima a Caracas (km):
+            <input id="distance-threshold" type="number" min="50" max="2500" step="50" value="1200" />
+          </label>
+        </div>
+
+        <div class="warning-note">
+          <strong>Nota importante:</strong> esto es una alerta rápida de
+          eventos ya detectados por redes públicas (USGS), no reemplaza un
+          sistema oficial de alerta temprana por ondas P con sensores locales.
+        </div>
+
+        <ul id="quake-list" class="quake-list" aria-live="polite"></ul>
+      </aside>
+    </main>
+
+    <template id="quake-item-template">
+      <li class="quake-item">
+        <div class="quake-header">
+          <span class="quake-mag"></span>
+          <span class="quake-time"></span>
+        </div>
+        <div class="quake-place"></div>
+        <div class="quake-meta"></div>
+      </li>
+    </template>
+
+    <audio id="alert-sound" preload="auto">
+      <source
+        src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg"
+        type="audio/ogg"
+      />
+    </audio>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
