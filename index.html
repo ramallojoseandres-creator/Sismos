@@ -29,6 +29,20 @@
             <span id="status-text">Conectando…</span>
           </div>
         </div>
+        <div class="monitor-strip">
+          <div class="monitor-chip">
+            <span class="chip-label">Último evento</span>
+            <strong id="last-event-text">Esperando datos…</strong>
+          </div>
+          <div class="monitor-chip">
+            <span class="chip-label">Stream</span>
+            <strong id="stream-rate-text">0 eventos/min</strong>
+          </div>
+          <label class="monitor-toggle">
+            <input id="autofocus-toggle" type="checkbox" checked />
+            Autoenfocar evento nuevo
+          </label>
+        </div>
         <div id="map"></div>
       </section>
 
@@ -80,6 +94,11 @@
         <div class="source-note">
           Fuentes activas:
           <span id="sources-text">Cargando…</span>
+        </div>
+
+        <div class="live-feed-wrap">
+          <h3>Feed en vivo</h3>
+          <ul id="live-feed" class="live-feed" aria-live="polite"></ul>
         </div>
 
         <ul id="quake-list" class="quake-list" aria-live="polite"></ul>

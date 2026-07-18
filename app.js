@@ -8,10 +8,14 @@ const els = {
   statusDot: document.getElementById("status-dot"),
   statusText: document.getElementById("status-text"),
   quakeList: document.getElementById("quake-list"),
+  liveFeed: document.getElementById("live-feed"),
   itemTemplate: document.getElementById("quake-item-template"),
   metricGlobal: document.getElementById("metric-global"),
   metricVenezuela: document.getElementById("metric-venezuela"),
   metricHigh: document.getElementById("metric-high"),
+  lastEventText: document.getElementById("last-event-text"),
+  streamRateText: document.getElementById("stream-rate-text"),
+  autofocusToggle: document.getElementById("autofocus-toggle"),
   forceRefresh: document.getElementById("force-refresh"),
   magnitudeThreshold: document.getElementById("magnitude-threshold"),
   distanceThreshold: document.getElementById("distance-threshold"),
@@ -26,6 +30,7 @@ const state = {
   statePolygons: [],
   hasReceivedInitialSnapshot: false,
   alertedQuakeIds: new Set(),
+  recentEventTimes: [],
 };
 
 const map = L.map("map", {
@@ -41,6 +46,8 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
 L.marker([CARACAS.lat, CARACAS.lon])
   .addTo(map)
   .bindPopup("Caracas (referencia de distancia)");
+
+const pulseLayer = L.layerGroup().addTo(map);
 
 function formatAgo(timeMs) {
   const minutes = Math.max(0, Math.floor((Date.now() - timeMs) / 60_000));
@@ -86,6 +93,44 @@ function shouldTriggerAlert(quake) {
     matchesState &&
     (Boolean(quake.venezuelaState) || quake.distanceToCaracasKm <= maxDistance)
   );
+}
+
+function updateMonitorHeader(lastQuake) {
+  const now = Date.now();
+  state.recentEventTimes = state.recentEventTimes.filter((t) => now - t <= 60_000);
+  els.streamRateText.textContent = `${state.recentEventTimes.length} eventos/min`;
+
+  if (!lastQuake) {
+    els.lastEventText.textContent = "Esperando datos…";
+    return;
+  }
+  els.lastEventText.textContent =
+    `M ${lastQuake.mag.toFixed(1)} · ${lastQuake.place} (${formatAgo(lastQuake.time)})`;
+}
+
+function appendLiveFeed(text) {
+  const li = document.createElement("li");
+  li.textContent = text;
+  els.liveFeed.prepend(li);
+  while (els.liveFeed.children.length > 14) {
+    els.liveFeed.removeChild(els.liveFeed.lastChild);
+  }
+}
+
+function drawPulse(quake) {
+  const style = getMarkerStyle(quake.mag);
+  const pulse = L.circleMarker([quake.lat, quake.lon], {
+    radius: style.radius + 2,
+    color: style.color,
+    fillColor: style.color,
+    fillOpacity: 0.3,
+    className: "quake-pulse",
+    weight: 1.1,
+  }).addTo(pulseLayer);
+
+  setTimeout(() => {
+    pulseLayer.removeLayer(pulse);
+  }, 1800);
 }
 
 function renderList(quakes) {
@@ -209,12 +254,26 @@ function applySnapshot(snapshot) {
 
   renderList(quakes.slice(0, 30));
   updateMarkers(quakes);
+  updateMonitorHeader(quakes[0]);
   setStatus("En línea (WS)", "#34d399");
 }
 
 function onNewQuakes(newQuakes) {
   if (!state.hasReceivedInitialSnapshot) return;
   for (const quake of newQuakes) {
+    state.recentEventTimes.push(Date.now());
+    updateMonitorHeader(quake);
+    appendLiveFeed(
+      `${new Date(quake.time).toLocaleTimeString()} · M ${quake.mag.toFixed(1)} · ${quake.place}`
+    );
+    drawPulse(quake);
+
+    if (els.autofocusToggle.checked && (quake.mag >= 4.8 || quake.venezuelaState)) {
+      map.flyTo([quake.lat, quake.lon], Math.max(map.getZoom(), 4), {
+        duration: 1.4,
+      });
+    }
+
     if (state.alertedQuakeIds.has(quake.id)) continue;
     if (shouldTriggerAlert(quake)) {
       triggerAlert(quake);
@@ -247,6 +306,18 @@ function connectWebSocket() {
         state.hasReceivedInitialSnapshot = true;
       } else if (message.type === "new_quakes") {
         onNewQuakes(message.data || []);
+        if (state.latestSnapshot && message.data?.length) {
+          const merged = [...message.data, ...(state.latestSnapshot.quakes || [])];
+          const unique = [];
+          const seen = new Set();
+          for (const quake of merged) {
+            if (seen.has(quake.id)) continue;
+            seen.add(quake.id);
+            unique.push(quake);
+          }
+          state.latestSnapshot.quakes = unique;
+          applySnapshot(state.latestSnapshot);
+        }
       } else if (message.type === "alert") {
         const quake = message.data;
         if (!quake || state.alertedQuakeIds.has(quake.id)) return;

@@ -9,6 +9,10 @@ App web de monitoreo sísmico en tiempo real inspirada en GlobalQuake:
   - feed regional opcional configurable.
 - Backend Node.js con WebSocket para fan-out de alertas en tiempo real.
 - Geocercas por estado de Venezuela para clasificar eventos nacionales.
+- Modo monitor en vivo estilo sala operativa:
+  - feed en tiempo real,
+  - resaltado/pulso de eventos nuevos en mapa,
+  - autoenfoque opcional en eventos relevantes.
 - Regla de alerta configurable para Venezuela:
   - magnitud mínima,
   - distancia máxima a Caracas,
