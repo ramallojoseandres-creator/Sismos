@@ -3,6 +3,7 @@ const fs = require("fs");
 const path = require("path");
 const { WebSocketServer } = require("ws");
 const { EarthquakeService } = require("./earthquake-service");
+const { RealtimeStream } = require("./realtime-stream");
 const { VENEZUELA_STATE_GEOFENCES } = require("./venezuela-states");
 
 const PORT = Number(process.env.PORT || 8080);
@@ -17,6 +18,12 @@ const MIME_TYPES = {
 };
 
 const earthquakeService = new EarthquakeService();
+let realtimeStatus = {
+  source: "emsc-rt",
+  connected: false,
+  updatedAt: null,
+  detail: "idle",
+};
 
 function writeJson(res, statusCode, payload) {
   res.writeHead(statusCode, {
@@ -95,6 +102,12 @@ wss.on("connection", (socket) => {
       data: earthquakeService.fastState,
     })
   );
+  socket.send(
+    JSON.stringify({
+      type: "realtime_status",
+      data: realtimeStatus,
+    })
+  );
 });
 
 async function refreshAndBroadcast() {
@@ -134,10 +147,30 @@ async function refreshFastAndBroadcast() {
 }
 
 server.listen(PORT, () => {
+  const realtimeStream = new RealtimeStream({
+    onStatus: (status) => {
+      realtimeStatus = status;
+      broadcast({ type: "realtime_status", data: status });
+    },
+    onEvent: (candidate) => {
+      const quake = earthquakeService.ingestRealtimeCandidate(candidate);
+      if (!quake) return;
+      broadcast({ type: "global_realtime", data: quake });
+      broadcast({ type: "new_quakes", data: [quake] });
+      if (earthquakeService.shouldTriggerAlert(quake)) {
+        broadcast({ type: "alert", data: quake });
+      }
+    },
+    onError: (error) => {
+      broadcast({ type: "error", data: { message: error.message || String(error) } });
+    },
+  });
+
   // eslint-disable-next-line no-console
   console.log(`Sismos app en http://localhost:${PORT}`);
   refreshAndBroadcast();
   refreshFastAndBroadcast();
+  realtimeStream.start();
   setInterval(refreshAndBroadcast, REFRESH_MS);
   setInterval(refreshFastAndBroadcast, FAST_REFRESH_MS);
 });

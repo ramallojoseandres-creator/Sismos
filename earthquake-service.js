@@ -179,8 +179,68 @@ class EarthquakeService {
       sources: DEFAULT_SOURCES,
     };
     this.lastIds = new Set();
+    this.realtimeSeenIds = new Set();
     this.fastSeenIds = new Set();
     this.fastState = { updatedAt: null, prealertsLastMinute: 0, sourceErrors: [] };
+  }
+
+  normalizeRealtimeCandidate(candidate, source = "emsc-rt") {
+    const lat = Number(candidate.lat);
+    const lon = Number(candidate.lon);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+    const time = Number(new Date(candidate.time || candidate.updated || Date.now()).valueOf());
+    if (!Number.isFinite(time)) return null;
+
+    const mag = Number(candidate.mag || candidate.magnitude || 0);
+    const depthKm = Number(candidate.depthKm ?? candidate.depth ?? 0);
+    const place = candidate.place || candidate.region || candidate.title || "Ubicación no disponible";
+    const id =
+      candidate.id ||
+      `${source}:${Math.round(time / 1000)}:${lat.toFixed(3)}:${lon.toFixed(3)}:${Number.isFinite(mag) ? mag.toFixed(1) : "0.0"}`;
+
+    const distanceToCaracasKm = distanceKm(lat, lon, CARACAS.lat, CARACAS.lon);
+    const venezuelaState = locateVenezuelaState(lat, lon);
+
+    return {
+      id: String(id),
+      source,
+      mag: Number.isFinite(mag) ? mag : 0,
+      place,
+      time,
+      lat,
+      lon,
+      depthKm: Number.isFinite(depthKm) ? depthKm : 0,
+      distanceToCaracasKm,
+      venezuelaState,
+    };
+  }
+
+  shouldTriggerAlert(quake) {
+    return shouldTriggerServerAlert(quake);
+  }
+
+  ingestRealtimeCandidate(candidate) {
+    const normalized = this.normalizeRealtimeCandidate(candidate);
+    if (!normalized) return null;
+    if (this.realtimeSeenIds.has(normalized.id) || this.lastIds.has(normalized.id)) {
+      return null;
+    }
+
+    this.realtimeSeenIds.add(normalized.id);
+    if (this.realtimeSeenIds.size > 5000) {
+      this.realtimeSeenIds = new Set(Array.from(this.realtimeSeenIds).slice(-3000));
+    }
+
+    const merged = dedupeQuakes([normalized, ...(this.snapshot.quakes || [])]).slice(0, 250);
+    this.snapshot = {
+      ...this.snapshot,
+      refreshedAt: Date.now(),
+      quakes: merged,
+      stats: buildStats(merged),
+    };
+    this.lastIds = new Set(merged.map((q) => q.id));
+    return normalized;
   }
 
   async refresh() {

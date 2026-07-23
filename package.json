@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "check": "node --check server.js && node --check earthquake-service.js && node --check app.js && node --check venezuela-states.js"
+    "check": "node --check server.js && node --check earthquake-service.js && node --check realtime-stream.js && node --check app.js && node --check venezuela-states.js"
   },
   "license": "MIT",
   "dependencies": {

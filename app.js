@@ -22,6 +22,7 @@ const els = {
   distanceThreshold: document.getElementById("distance-threshold"),
   stateFilter: document.getElementById("state-filter"),
   sourcesText: document.getElementById("sources-text"),
+  realtimeText: document.getElementById("realtime-text"),
   alertSound: document.getElementById("alert-sound"),
 };
 
@@ -310,6 +311,20 @@ function onFastPreAlerts(prealerts) {
   }
 }
 
+function mergeRealtimeIntoSnapshot(quake) {
+  if (!state.latestSnapshot) return;
+  const merged = [quake, ...(state.latestSnapshot.quakes || [])];
+  const unique = [];
+  const seen = new Set();
+  for (const item of merged) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    unique.push(item);
+  }
+  state.latestSnapshot.quakes = unique.slice(0, 250);
+  applySnapshot(state.latestSnapshot);
+}
+
 async function fetchSnapshot() {
   setStatus("Sincronizando snapshot…", "#fbbf24");
   const response = await fetch(API_SNAPSHOT, { cache: "no-store" });
@@ -356,6 +371,24 @@ function connectWebSocket() {
       } else if (message.type === "fast_status") {
         const count = Number(message.data?.prealertsLastMinute || 0);
         els.fastCountText.textContent = `${count} activas`;
+      } else if (message.type === "realtime_status") {
+        const connected = Boolean(message.data?.connected);
+        els.realtimeText.textContent = connected ? "conectado" : "desconectado";
+      } else if (message.type === "global_realtime") {
+        const quake = message.data;
+        if (!quake) return;
+        state.recentEventTimes.push(Date.now());
+        updateMonitorHeader(quake);
+        appendLiveFeed(
+          `🌐 RT ${new Date(quake.time).toLocaleTimeString()} · M ${quake.mag.toFixed(1)} · ${quake.place}`
+        );
+        drawPulse(quake);
+        if (els.autofocusToggle.checked && quake.mag >= 4.5) {
+          map.flyTo([quake.lat, quake.lon], Math.max(map.getZoom(), 4), {
+            duration: 1.0,
+          });
+        }
+        mergeRealtimeIntoSnapshot(quake);
       } else if (message.type === "fast_prealert") {
         onFastPreAlerts(message.data || []);
       } else if (message.type === "error") {

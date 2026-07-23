@@ -16,6 +16,10 @@ App web de monitoreo sísmico en tiempo real inspirada en GlobalQuake:
 - Carril rápido de pre-alerta:
   - sondeo rápido EMSC (`emsc-fast`) para avisos preliminares,
   - emisión WebSocket `fast_prealert` y estado `fast_status`.
+- Stream global en vivo (estilo monitor):
+  - conexión WebSocket a EMSC Standing Order,
+  - ingestión inmediata de eventos `global_realtime`,
+  - estado de enlace realtime (`realtime_status`).
 - Regla de alerta configurable para Venezuela:
   - magnitud mínima,
   - distancia máxima a Caracas,
@@ -44,6 +48,7 @@ export REFRESH_MS=30000
 export FAST_REFRESH_MS=7000
 export PREALERT_MIN_MAG=3.8
 export PREALERT_MAX_DISTANCE_KM=1700
+export EMSC_REALTIME_WS_URL="wss://www.seismicportal.eu/standing_order/websocket"
 ```
 
 ### 3) Iniciar servidor
