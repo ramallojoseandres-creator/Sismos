@@ -1,0 +1,15 @@
+{
+  "name": "sismos-alerta-websocket",
+  "version": "1.0.0",
+  "description": "App de monitoreo sísmico global con alertas para Venezuela",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check earthquake-service.js && node --check realtime-stream.js && node --check app.js && node --check venezuela-states.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "ws": "^8.18.3"
+  }
+}
