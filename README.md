@@ -6,25 +6,30 @@ Inspirada en monitores tipo [LIVE 3D Globe Earthquake Monitor](https://www.youtu
 
 ## Qué incluye
 
+- **Motor GlobalQuake (propio):** SeedLink IRIS → STA/LTA → triangulación multiestación.
+  Emite alertas **antes** de que existan boletines USGS/EMSC/FUNVISIS.
 - Mapa oscuro centrado en Venezuela (Leaflet + Carto).
-- Animación de **ondas P (~6 km/s)** y **S (~3.5 km/s)** desde el epicentro.
-- **ETA a ciudades** (Caracas, Maracaibo, Valencia, etc.) y ventana de alerta P→S.
-- Capas de **estaciones FUNVISIS / IU** y **fallas activas** (Boconó, El Pilar, San Sebastián, Oca–Ancón…).
-- Geocercas por estado para clasificar eventos nacionales.
-- Pre-alerta rápida EMSC + stream WebSocket EMSC Standing Order.
-- Banner, sonido y notificaciones del navegador según reglas configurables.
+- Animación de **ondas P (~6 km/s)** y **S (~3.5 km/s)** desde el epicentro estimado.
+- Estaciones SeedLink en vivo (se ponen verdes al detectar onda P).
+- **ETA a ciudades** y ventana de alerta P→S.
+- Capas de fallas activas y geocercas por estado.
+- Catálogo de apoyo (USGS/EMSC/GFZ/FUNVISIS) como verificación secundaria.
 
 ## Fuentes de datos
 
 | Fuente | Uso |
 | --- | --- |
-| **USGS** feed horario + FDSN regional | Tiempo real global y catálogo zona VE |
-| **EMSC / SeismicPortal** FDSN + WS | Tiempo real y pre-alerta |
-| **GFZ GEOFON** FDSN | Eventos regionales |
-| **FUNVISIS catalog** (GitHub / ISC + reportes) | Catálogo nacional (~23k eventos) |
+| **IRIS SeedLink** (`rtserve.iris.washington.edu`) | Formas de onda en vivo → detección GQ |
+| **USGS** feed + FDSN regional | Catálogo de apoyo |
+| **EMSC / SeismicPortal** FDSN + WS | Catálogo / stream de apoyo |
+| **GFZ GEOFON** FDSN | Catálogo regional |
+| **FUNVISIS catalog** | Histórico nacional |
 | **Regional** (`REGIONAL_FEED_URL`) | Feed GeoJSON opcional |
 
-> **Importante:** esto **no reemplaza** un sistema oficial de alerta temprana por sensores de onda P (FUNVISIS / protección civil). Las ondas animadas estiman tiempos teóricos a partir de orígenes ya publicados por redes públicas.
+Estaciones SeedLink usadas (Caribe / norte Sudamérica): IU.SDV, IU.SJG, IU.OTAV, CU.BBGH/GRGR/ANWB/GTBY/SDDR, CM.URI/CRJC/SMAR/OCA/RUS, PR.ACPR, WI.ABD, G.MPG.
+
+> **Importante:** el motor GQ es **experimental**. Puede haber falsos positivos.
+> No reemplaza un sistema oficial FUNVISIS / protección civil.
 
 ## Ejecutar
 
@@ -47,22 +52,28 @@ export PREALERT_MIN_MAG=3.8
 export PREALERT_MAX_DISTANCE_KM=1700
 export REGIONAL_FEED_URL="https://tu-feed/earthquakes.geojson"
 export EMSC_REALTIME_WS_URL="wss://www.seismicportal.eu/standing_order/websocket"
+export SEEDLINK_HOST="rtserve.iris.washington.edu"
+export SEEDLINK_PORT=18000
+export GQ_STA_LTA=3.0
 export FUNVISIS_CATALOG_URL="https://raw.githubusercontent.com/kyleedwardbradley/funvisis-catalog/main/funvisis_catalog.csv"
 ```
 
 ## API
 
 - `GET /api/earthquakes` — snapshot consolidado + capas geo
+- `GET /api/gq` — estado motor GlobalQuake, estaciones y detecciones
 - `GET /api/layers` — estaciones, fallas, ciudades, bbox
 - `GET /api/geofences/venezuela` — estados
-- `GET /api/status` — salud de fuentes / realtime
+- `GET /api/status` — salud de fuentes / realtime / seedlink
 - `GET /healthz`
-- `WS /ws` — `snapshot`, `new_quakes`, `alert`, `fast_prealert`, `global_realtime`, `realtime_status`
+- `WS /ws` — `gq_detection`, `gq_station_trigger`, `gq_snapshot`, `snapshot`, `alert`, …
 
 ## Arquitectura
 
 - `server.js` — HTTP + WebSocket
-- `earthquake-service.js` — agregación, dedupe, alertas, ETA
+- `gq-detector.js` — motor GlobalQuake (STA/LTA + localización)
+- `seedlink-client.js` — cliente SeedLink TCP
+- `earthquake-service.js` — catálogos de apoyo, dedupe, alertas
 - `realtime-stream.js` — EMSC Standing Order
 - `venezuela-geo.js` — ciudades, estaciones, fallas, física de ondas
 - `venezuela-states.js` — geocercas

@@ -32,6 +32,10 @@ const els = {
   stateFilter: document.getElementById("state-filter"),
   sourcesText: document.getElementById("sources-text"),
   realtimeText: document.getElementById("realtime-text"),
+  gqPill: document.getElementById("gq-pill"),
+  gqStatusText: document.getElementById("gq-status-text"),
+  gqTriggerText: document.getElementById("gq-trigger-text"),
+  gqDetectionList: document.getElementById("gq-detection-list"),
   alertSound: document.getElementById("alert-sound"),
   alertBanner: document.getElementById("alert-banner"),
   alertTitle: document.getElementById("alert-title"),
@@ -44,6 +48,7 @@ const state = {
   latestSnapshot: null,
   statePolygons: [],
   stationLayer: L.layerGroup(),
+  gqStationLayer: L.layerGroup(),
   faultLayer: L.layerGroup(),
   cityLayer: L.layerGroup(),
   waveLayer: L.layerGroup(),
@@ -55,6 +60,9 @@ const state = {
   selectedQuakeId: null,
   waveAnimation: null,
   layersReady: false,
+  gqStationMarkers: new Map(),
+  gqTriggerCount: 0,
+  gqDetectionsSeen: new Set(),
 };
 
 const map = L.map("map", {
@@ -70,6 +78,7 @@ L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
 
 state.faultLayer.addTo(map);
 state.stationLayer.addTo(map);
+state.gqStationLayer.addTo(map);
 state.cityLayer.addTo(map);
 state.pulseLayer.addTo(map);
 state.waveLayer.addTo(map);
@@ -395,6 +404,7 @@ function populateStateFilter(states) {
 function renderStations(stations) {
   state.stationLayer.clearLayers();
   for (const st of stations || []) {
+    if (st.key) continue;
     const icon = L.divIcon({
       className: "station-icon",
       html: `<div style="width:8px;height:8px;border:1.5px solid #2dd4bf;background:rgba(45,212,191,.25);transform:rotate(45deg);"></div>`,
@@ -403,7 +413,104 @@ function renderStations(stations) {
     });
     L.marker([st.lat, st.lon], { icon })
       .addTo(state.stationLayer)
-      .bindTooltip(`${st.code} · ${st.name} (${st.locality})`);
+      .bindTooltip(`${st.code || st.station} · ${st.name}`);
+  }
+}
+
+function renderGqStations(stations) {
+  const incoming = new Set();
+  for (const st of stations || []) {
+    const key = st.key || `${st.network}.${st.station}`;
+    incoming.add(key);
+    let marker = state.gqStationMarkers.get(key);
+    const active = Boolean(st.active) || Number(st.ratio) >= 2.5;
+    const html = `<div class="station-dot${active ? " active" : ""}" title="${key}"></div>`;
+    const icon = L.divIcon({
+      className: "station-icon",
+      html,
+      iconSize: [12, 12],
+      iconAnchor: [6, 6],
+    });
+    if (!marker) {
+      marker = L.marker([st.lat, st.lon], { icon }).addTo(state.gqStationLayer);
+      state.gqStationMarkers.set(key, marker);
+    } else {
+      marker.setIcon(icon);
+    }
+    marker.bindTooltip(
+      `${key} · ${st.name || ""}` +
+        (st.ratio ? `<br/>STA/LTA ${Number(st.ratio).toFixed(2)}` : "") +
+        (active ? "<br/><b>TRIGGER P</b>" : "")
+    );
+  }
+  for (const [key, marker] of state.gqStationMarkers.entries()) {
+    if (!incoming.has(key)) {
+      state.gqStationLayer.removeLayer(marker);
+      state.gqStationMarkers.delete(key);
+    }
+  }
+}
+
+function prependGqDetection(detection) {
+  if (!els.gqDetectionList) return;
+  if (state.gqDetectionsSeen.has(detection.id)) return;
+  state.gqDetectionsSeen.add(detection.id);
+  const li = document.createElement("li");
+  li.innerHTML =
+    `<strong>GQ Mest ${Number(detection.mag).toFixed(1)}</strong> · ` +
+    `${detection.place}<br/>` +
+    `<span class="muted">${detection.pickCount || 0} estaciones · ` +
+    `RMS ${detection.rmsSec ?? "?"}s · ${detection.confidence || "preliminar"}</span>`;
+  li.addEventListener("click", () => selectQuake(detection, { fly: true, replayWaves: true }));
+  els.gqDetectionList.prepend(li);
+  while (els.gqDetectionList.children.length > 8) {
+    els.gqDetectionList.removeChild(els.gqDetectionList.lastChild);
+  }
+}
+
+function applyGqSnapshot(gq) {
+  if (!gq) return;
+  if (gq.status) {
+    const on = Boolean(gq.status.connected);
+    if (els.gqPill) {
+      els.gqPill.textContent = on
+        ? `SeedLink ON · ${gq.status.stations || gq.stations?.length || 0} est.`
+        : "SeedLink OFF";
+      els.gqPill.classList.toggle("off", !on);
+    }
+    if (els.gqStatusText) {
+      els.gqStatusText.textContent = on
+        ? `ON · ${gq.status.packets || 0} pkts`
+        : gq.status.detail || "OFF";
+    }
+  }
+  if (gq.stations) renderGqStations(gq.stations);
+  if (gq.detections?.length) {
+    for (const det of [...gq.detections].reverse()) {
+      prependGqDetection(det);
+    }
+  }
+}
+
+function handleGqDetection(detection) {
+  if (!detection) return;
+  prependGqDetection(detection);
+  appendLiveFeed(
+    `GQ EEW Mest ${Number(detection.mag).toFixed(1)} · ${detection.place} · ${detection.pickCount} est.`,
+    "alert-item"
+  );
+  drawPulse(detection);
+  if (els.wavesToggle.checked) {
+    startWaveAnimation(detection, { replay: true });
+  }
+  renderEtas(detection);
+  if (els.autofocusToggle.checked) {
+    map.flyTo([detection.lat, detection.lon], Math.max(map.getZoom(), 6), { duration: 1.0 });
+  }
+  if (state.alertedQuakeIds.has(detection.id)) return;
+  if (shouldTriggerAlert(detection) || detection.mag >= Number(els.magnitudeThreshold.value || 4)) {
+    triggerAlert(detection);
+    state.alertedQuakeIds.add(detection.id);
   }
 }
 
@@ -476,8 +583,10 @@ async function loadLayers() {
 function syncLayerVisibility() {
   if (els.stationsToggle.checked) {
     if (!map.hasLayer(state.stationLayer)) state.stationLayer.addTo(map);
-  } else if (map.hasLayer(state.stationLayer)) {
-    map.removeLayer(state.stationLayer);
+    if (!map.hasLayer(state.gqStationLayer)) state.gqStationLayer.addTo(map);
+  } else {
+    if (map.hasLayer(state.stationLayer)) map.removeLayer(state.stationLayer);
+    if (map.hasLayer(state.gqStationLayer)) map.removeLayer(state.gqStationLayer);
   }
 
   if (els.faultsToggle.checked) {
@@ -517,6 +626,8 @@ function applySnapshot(snapshot) {
     state.layersReady = true;
     syncLayerVisibility();
   }
+
+  if (snapshot.gq) applyGqSnapshot(snapshot.gq);
 
   const focusList =
     snapshot.focus?.venezuelaQuakes?.length
@@ -674,6 +785,35 @@ function connectWebSocket() {
         mergeRealtimeIntoSnapshot(quake);
       } else if (message.type === "fast_prealert") {
         onFastPreAlerts(message.data || []);
+      } else if (message.type === "gq_status") {
+        const on = Boolean(message.data?.connected);
+        if (els.gqPill) {
+          els.gqPill.textContent = on ? "SeedLink ON" : "SeedLink OFF";
+          els.gqPill.classList.toggle("off", !on);
+        }
+        if (els.gqStatusText) {
+          els.gqStatusText.textContent = on
+            ? `ON · ${message.data?.packets || 0} pkts`
+            : message.data?.detail || "OFF";
+        }
+      } else if (message.type === "gq_snapshot") {
+        applyGqSnapshot(message.data);
+      } else if (message.type === "gq_stations") {
+        renderGqStations(message.data || []);
+      } else if (message.type === "gq_station_trigger") {
+        state.gqTriggerCount += 1;
+        if (els.gqTriggerText) {
+          els.gqTriggerText.textContent = String(state.gqTriggerCount);
+        }
+        const pick = message.data;
+        if (pick) {
+          appendLiveFeed(
+            `P-TRIGGER ${pick.network}.${pick.station} · ratio ${pick.ratio}`,
+            "fast-item"
+          );
+        }
+      } else if (message.type === "gq_detection") {
+        handleGqDetection(message.data);
       } else if (message.type === "error") {
         setStatus("Error en fuentes", "#e85d4c");
       }

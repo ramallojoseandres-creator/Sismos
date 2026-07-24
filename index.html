@@ -27,11 +27,12 @@
       <header class="topbar">
         <div class="brand-block">
           <p class="brand">SISMÓS VE</p>
-          <h1>Monitor sísmico en tiempo real — Venezuela</h1>
+          <h1>Detección tipo GlobalQuake — SeedLink + ondas P/S — Venezuela</h1>
         </div>
         <div class="topbar-status">
           <span class="status-dot" id="status-dot"></span>
           <span id="status-text">Conectando…</span>
+          <span class="gq-pill" id="gq-pill">SeedLink …</span>
           <button id="force-refresh" type="button">Actualizar</button>
         </div>
       </header>
@@ -60,8 +61,16 @@
               <strong id="fast-count-text">0</strong>
             </div>
             <div class="hud-chip">
-              <span>Realtime</span>
+              <span>Realtime EMSC</span>
               <strong id="realtime-text">…</strong>
+            </div>
+            <div class="hud-chip">
+              <span>Motor GQ</span>
+              <strong id="gq-status-text">iniciando…</strong>
+            </div>
+            <div class="hud-chip">
+              <span>Triggers STA/LTA</span>
+              <strong id="gq-trigger-text">0</strong>
             </div>
             <label class="hud-toggle">
               <input id="autofocus-toggle" type="checkbox" checked />
@@ -73,7 +82,7 @@
             </label>
             <label class="hud-toggle">
               <input id="stations-toggle" type="checkbox" checked />
-              Estaciones
+              Estaciones GQ
             </label>
             <label class="hud-toggle">
               <input id="faults-toggle" type="checkbox" checked />
@@ -82,6 +91,7 @@
           </div>
           <div id="map"></div>
           <div class="map-legend">
+            <span><i class="lg gq"></i> Estación activa (P)</span>
             <span><i class="lg p"></i> Onda P (~6 km/s)</span>
             <span><i class="lg s"></i> Onda S (~3.5 km/s)</span>
             <span><i class="lg m4"></i> M 4+</span>
@@ -91,6 +101,15 @@
         </section>
 
         <aside class="side-rail">
+          <section class="rail-block gq-banner">
+            <h2>Modo GlobalQuake</h2>
+            <p>
+              Detecta con <strong>ondas en vivo</strong> vía SeedLink (IRIS) y STA/LTA.
+              No espera boletines USGS/EMSC/FUNVISIS para emitir la primera alerta.
+            </p>
+            <ul id="gq-detection-list" class="gq-detection-list" aria-live="assertive"></ul>
+          </section>
+
           <section class="rail-block metrics-block">
             <div class="metric">
               <span>Eventos cargados</span>
@@ -146,14 +165,14 @@
 
           <section class="rail-block note-block">
             <p>
-              Fuentes: USGS, EMSC/SeismicPortal (WS), GFZ GEOFON, catálogo FUNVISIS
-              (ISC + reportes). Estaciones red VE / IU.
+              Motor GQ: SeedLink IRIS (IU/CU/CM/PR/WI/G) → STA/LTA → triangulación.
+              Catálogo de apoyo: USGS, EMSC, GFZ, FUNVISIS.
             </p>
             <p id="sources-text" class="muted">Cargando fuentes…</p>
             <p class="warn">
-              No reemplaza un sistema oficial de alerta por sensores P locales
-              (FUNVISIS / protección civil). Las ondas animadas estiman tiempos
-              teóricos a partir del origen ya publicado.
+              Experimental: la detección propia puede generar falsos positivos.
+              No reemplaza FUNVISIS / protección civil. Magnitud estimada (Mest)
+              a partir de amplitudes tempranas.
             </p>
           </section>
         </aside>

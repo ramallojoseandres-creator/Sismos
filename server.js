@@ -4,6 +4,7 @@ const path = require("path");
 const { WebSocketServer } = require("ws");
 const { EarthquakeService } = require("./earthquake-service");
 const { RealtimeStream } = require("./realtime-stream");
+const { GlobalQuakeEngine } = require("./gq-detector");
 const { VENEZUELA_STATE_GEOFENCES } = require("./venezuela-states");
 
 const PORT = Number(process.env.PORT || 8080);
@@ -20,8 +21,17 @@ const MIME_TYPES = {
 };
 
 const earthquakeService = new EarthquakeService();
+const gqEngine = new GlobalQuakeEngine();
+
 let realtimeStatus = {
   source: "emsc-rt",
+  connected: false,
+  updatedAt: null,
+  detail: "idle",
+};
+
+let gqStatus = {
+  source: "seedlink",
   connected: false,
   updatedAt: null,
   detail: "idle",
@@ -54,7 +64,15 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, `http://${req.headers.host}`);
 
   if (url.pathname === "/api/earthquakes") {
-    writeJson(res, 200, earthquakeService.snapshot);
+    writeJson(res, 200, {
+      ...earthquakeService.snapshot,
+      gq: gqEngine.getSnapshot(),
+    });
+    return;
+  }
+
+  if (url.pathname === "/api/gq") {
+    writeJson(res, 200, gqEngine.getSnapshot());
     return;
   }
 
@@ -64,7 +82,10 @@ const server = http.createServer((req, res) => {
   }
 
   if (url.pathname === "/api/layers") {
-    writeJson(res, 200, earthquakeService.getReferenceLayers());
+    writeJson(res, 200, {
+      ...earthquakeService.getReferenceLayers(),
+      gqStations: gqEngine.getStationActivity(),
+    });
     return;
   }
 
@@ -78,6 +99,7 @@ const server = http.createServer((req, res) => {
       realtime: realtimeStatus,
       fast: earthquakeService.fastState,
       funvisisMeta: earthquakeService.snapshot.funvisisMeta,
+      globalquake: gqStatus,
     });
     return;
   }
@@ -86,6 +108,7 @@ const server = http.createServer((req, res) => {
     writeJson(res, 200, {
       ok: true,
       refreshedAt: earthquakeService.snapshot.refreshedAt,
+      gqConnected: Boolean(gqStatus.connected),
     });
     return;
   }
@@ -117,28 +140,25 @@ wss.on("connection", (socket) => {
   socket.send(
     JSON.stringify({
       type: "snapshot",
-      data: earthquakeService.snapshot,
+      data: {
+        ...earthquakeService.snapshot,
+        gq: gqEngine.getSnapshot(),
+      },
     })
   );
-  socket.send(
-    JSON.stringify({
-      type: "fast_status",
-      data: earthquakeService.fastState,
-    })
-  );
-  socket.send(
-    JSON.stringify({
-      type: "realtime_status",
-      data: realtimeStatus,
-    })
-  );
+  socket.send(JSON.stringify({ type: "fast_status", data: earthquakeService.fastState }));
+  socket.send(JSON.stringify({ type: "realtime_status", data: realtimeStatus }));
+  socket.send(JSON.stringify({ type: "gq_status", data: gqStatus }));
+  socket.send(JSON.stringify({ type: "gq_snapshot", data: gqEngine.getSnapshot() }));
 });
 
 async function refreshAndBroadcast() {
   try {
     const { snapshot, newQuakes, alerts } = await earthquakeService.refresh();
-
-    broadcast({ type: "snapshot", data: snapshot });
+    broadcast({
+      type: "snapshot",
+      data: { ...snapshot, gq: gqEngine.getSnapshot() },
+    });
     if (newQuakes.length > 0) {
       broadcast({ type: "new_quakes", data: newQuakes });
     }
@@ -193,11 +213,61 @@ server.listen(PORT, () => {
     },
   });
 
+  gqEngine.on("status", (status) => {
+    gqStatus = status;
+    broadcast({ type: "gq_status", data: status });
+  });
+
+  gqEngine.on("station_trigger", (pick) => {
+    broadcast({ type: "gq_station_trigger", data: pick });
+    // Refresco ligero de actividad de estaciones
+    broadcast({
+      type: "gq_stations",
+      data: gqEngine.getStationActivity(),
+    });
+  });
+
+  gqEngine.on("detection", (detection) => {
+    // Insertar detección GQ al frente del snapshot en memoria
+    const merged = earthquakeService.ingestRealtimeCandidate({
+      id: detection.id,
+      lat: detection.lat,
+      lon: detection.lon,
+      depth: detection.depthKm,
+      mag: detection.mag,
+      time: detection.time,
+      place: detection.place,
+      magType: detection.magType,
+    });
+    // Preferir el objeto enriquecido del motor GQ
+    broadcast({ type: "gq_detection", data: detection });
+    broadcast({ type: "new_quakes", data: [detection] });
+    if (
+      detection.mag >= Number(process.env.ALERT_MIN_MAG || 4.0) &&
+      detection.distanceToCaracasKm <= Number(process.env.ALERT_MAX_DISTANCE_KM || 1500)
+    ) {
+      broadcast({ type: "alert", data: detection });
+    }
+    if (merged) {
+      // no-op: ya emitimos detection
+    }
+  });
+
+  gqEngine.on("error", (err) => {
+    // eslint-disable-next-line no-console
+    console.error("GQ seedlink error:", err.message || err);
+  });
+
   // eslint-disable-next-line no-console
-  console.log(`SISMÓS VE en http://localhost:${PORT}`);
+  console.log(`SISMÓS VE (GlobalQuake mode) en http://localhost:${PORT}`);
+  gqEngine.start();
   refreshAndBroadcast();
   refreshFastAndBroadcast();
   realtimeStream.start();
   setInterval(refreshAndBroadcast, REFRESH_MS);
   setInterval(refreshFastAndBroadcast, FAST_REFRESH_MS);
+  // Push periódico de estado GQ / estaciones
+  setInterval(() => {
+    broadcast({ type: "gq_snapshot", data: gqEngine.getSnapshot() });
+  }, 5_000);
 });
