@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SISMÓS VE — Monitor sísmico Venezuela</title>
+    <meta
+      name="description"
+      content="Monitor sísmico en tiempo real centrado en Venezuela: mapa animado, ondas P/S, alertas tempranas y catálogo FUNVISIS + USGS + EMSC + GFZ."
+    />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Syne:wght@600;700;800&family=IBM+Plex+Sans:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+      integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+      crossorigin=""
+    />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand-block">
+          <p class="brand">SISMÓS VE</p>
+          <h1>Monitor sísmico en tiempo real — Venezuela</h1>
+        </div>
+        <div class="topbar-status">
+          <span class="status-dot" id="status-dot"></span>
+          <span id="status-text">Conectando…</span>
+          <button id="force-refresh" type="button">Actualizar</button>
+        </div>
+      </header>
+
+      <div id="alert-banner" class="alert-banner" hidden>
+        <div class="alert-banner-inner">
+          <strong id="alert-title">ALERTA</strong>
+          <span id="alert-body"></span>
+          <button id="alert-dismiss" type="button">Cerrar</button>
+        </div>
+      </div>
+
+      <main class="dashboard">
+        <section class="map-stage" aria-label="Mapa sísmico Venezuela">
+          <div class="map-hud">
+            <div class="hud-chip">
+              <span>Último evento</span>
+              <strong id="last-event-text">Esperando datos…</strong>
+            </div>
+            <div class="hud-chip">
+              <span>Stream EMSC</span>
+              <strong id="stream-rate-text">0 / min</strong>
+            </div>
+            <div class="hud-chip">
+              <span>Pre-alertas</span>
+              <strong id="fast-count-text">0</strong>
+            </div>
+            <div class="hud-chip">
+              <span>Realtime</span>
+              <strong id="realtime-text">…</strong>
+            </div>
+            <label class="hud-toggle">
+              <input id="autofocus-toggle" type="checkbox" checked />
+              Autoenfocar
+            </label>
+            <label class="hud-toggle">
+              <input id="waves-toggle" type="checkbox" checked />
+              Ondas P/S
+            </label>
+            <label class="hud-toggle">
+              <input id="stations-toggle" type="checkbox" checked />
+              Estaciones
+            </label>
+            <label class="hud-toggle">
+              <input id="faults-toggle" type="checkbox" checked />
+              Fallas
+            </label>
+          </div>
+          <div id="map"></div>
+          <div class="map-legend">
+            <span><i class="lg p"></i> Onda P (~6 km/s)</span>
+            <span><i class="lg s"></i> Onda S (~3.5 km/s)</span>
+            <span><i class="lg m4"></i> M 4+</span>
+            <span><i class="lg m5"></i> M 5+</span>
+            <span><i class="lg m6"></i> M 6+</span>
+          </div>
+        </section>
+
+        <aside class="side-rail">
+          <section class="rail-block metrics-block">
+            <div class="metric">
+              <span>Eventos cargados</span>
+              <strong id="metric-global">0</strong>
+            </div>
+            <div class="metric">
+              <span>En Venezuela</span>
+              <strong id="metric-venezuela">0</strong>
+            </div>
+            <div class="metric">
+              <span>Últimas 24 h</span>
+              <strong id="metric-24h">0</strong>
+            </div>
+            <div class="metric">
+              <span>M ≥ 5</span>
+              <strong id="metric-high">0</strong>
+            </div>
+          </section>
+
+          <section class="rail-block">
+            <h2>Regla de alerta</h2>
+            <label>
+              Magnitud mínima
+              <input id="magnitude-threshold" type="number" min="2" max="9" step="0.1" value="4.0" />
+            </label>
+            <label>
+              Distancia máx. a Caracas (km)
+              <input id="distance-threshold" type="number" min="50" max="2500" step="50" value="1200" />
+            </label>
+            <label>
+              Estado prioritario
+              <select id="state-filter">
+                <option value="">Todos</option>
+              </select>
+            </label>
+          </section>
+
+          <section class="rail-block etas-block">
+            <h2>ETA ondas a ciudades</h2>
+            <p class="muted" id="eta-context">Selecciona un sismo para simular llegada P/S.</p>
+            <ul id="eta-list" class="eta-list"></ul>
+          </section>
+
+          <section class="rail-block">
+            <h2>Feed en vivo</h2>
+            <ul id="live-feed" class="live-feed" aria-live="polite"></ul>
+          </section>
+
+          <section class="rail-block list-block">
+            <h2>Sismos recientes</h2>
+            <ul id="quake-list" class="quake-list" aria-live="polite"></ul>
+          </section>
+
+          <section class="rail-block note-block">
+            <p>
+              Fuentes: USGS, EMSC/SeismicPortal (WS), GFZ GEOFON, catálogo FUNVISIS
+              (ISC + reportes). Estaciones red VE / IU.
+            </p>
+            <p id="sources-text" class="muted">Cargando fuentes…</p>
+            <p class="warn">
+              No reemplaza un sistema oficial de alerta por sensores P locales
+              (FUNVISIS / protección civil). Las ondas animadas estiman tiempos
+              teóricos a partir del origen ya publicado.
+            </p>
+          </section>
+        </aside>
+      </main>
+    </div>
+
+    <template id="quake-item-template">
+      <li class="quake-item" tabindex="0">
+        <div class="quake-header">
+          <span class="quake-mag"></span>
+          <span class="quake-time"></span>
+        </div>
+        <div class="quake-place"></div>
+        <div class="quake-meta"></div>
+      </li>
+    </template>
+
+    <audio id="alert-sound" preload="auto">
+      <source
+        src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg"
+        type="audio/ogg"
+      />
+    </audio>
+
+    <script
+      src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+      integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+      crossorigin=""
+    ></script>
+    <script src="./app.js"></script>
+  </body>
+</html>
