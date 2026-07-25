@@ -1,0 +1,16 @@
+{
+  "name": "sismos-ve",
+  "version": "2.0.0",
+  "description": "Monitor sísmico en tiempo real centrado en Venezuela con ondas P/S y alertas",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "check": "node --check server.js && node --check earthquake-service.js && node --check realtime-stream.js && node --check app.js && node --check venezuela-states.js && node --check venezuela-geo.js && node --check seedlink-client.js && node --check gq-detector.js"
+  },
+  "license": "MIT",
+  "dependencies": {
+    "seisplotjs-miniseed": "^1.2.1",
+    "ws": "^8.18.3"
+  }
+}
