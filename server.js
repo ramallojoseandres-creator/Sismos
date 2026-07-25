@@ -190,7 +190,7 @@ async function refreshFastAndBroadcast() {
   }
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, "0.0.0.0", () => {
   const realtimeStream = new RealtimeStream({
     onStatus: (status) => {
       realtimeStatus = status;

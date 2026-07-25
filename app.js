@@ -1,7 +1,13 @@
-const API_SNAPSHOT = "/api/earthquakes";
-const API_GEOFENCES = "/api/geofences/venezuela";
-const API_LAYERS = "/api/layers";
-const WS_PATH = "/ws";
+// Soporte para despliegue bajo /sismos/ (proxy en SENAL puerto 3000)
+const BASE_PATH = (() => {
+  const pathName = window.location.pathname || "/";
+  if (pathName === "/sismos" || pathName.startsWith("/sismos/")) return "/sismos";
+  return "";
+})();
+const API_SNAPSHOT = `${BASE_PATH}/api/earthquakes`;
+const API_GEOFENCES = `${BASE_PATH}/api/geofences/venezuela`;
+const API_LAYERS = `${BASE_PATH}/api/layers`;
+const WS_PATH = `${BASE_PATH}/ws`;
 
 const CARACAS = { lat: 10.4806, lon: -66.9036 };
 const P_WAVE_KMS = 6.0;
