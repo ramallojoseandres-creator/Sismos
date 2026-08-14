@@ -67,8 +67,8 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
-import com.mlh.skinanalyzer.hardware.LightController
 import com.mlh.skinanalyzer.hardware.LightMode
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.serenegiant.widget.UVCCameraTextureView
@@ -89,7 +89,7 @@ import kotlin.coroutines.suspendCoroutine
 @Composable
 fun CaptureScreen(
     patient: Patient?,
-    controller: LightController,
+    controller: Mj008LightController,
     onBack: () -> Unit,
     onFinished: (Map<String, String>, Float?, String) -> Unit,
 ) {
@@ -117,10 +117,12 @@ fun CaptureScreen(
     }
 
     var uvcLabel by remember { mutableStateOf(uvcSession?.statusLabel ?: "") }
+    var uvcReady by remember { mutableStateOf(false) }
     LaunchedEffect(useUvc) {
         if (!useUvc) return@LaunchedEffect
         while (true) {
             uvcLabel = uvcSession?.statusLabel.orEmpty()
+            uvcReady = uvcSession?.isReady == true
             delay(500)
         }
     }
@@ -130,10 +132,10 @@ fun CaptureScreen(
         withContext(Dispatchers.IO) {
             runCatching {
                 if (useUvc) {
-                    // USBMonitor must register on main / after view bind; start() from UI factory too.
                     detection?.let { controller.setCameraVariant(it.cameraVariant) }
-                    // Keep UART LED path as backup if UVC LED fails.
-                    runCatching { controller.open() }
+                    // Critical: free USB so UVC can open the same USB3.0 device.
+                    controller.releaseUsbForUvc()
+                    controller.openSerialOnly()
                 } else {
                     detection?.let { controller.setCameraVariant(it.cameraVariant) }
                     controller.open()
@@ -228,12 +230,43 @@ fun CaptureScreen(
                     AndroidView(
                         factory = { ctx ->
                             UVCCameraTextureView(ctx).also { view ->
+                                controller.releaseUsbForUvc()
                                 uvcSession.bindPreview(view)
                                 uvcSession.start()
                             }
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
+                    if (!uvcReady) {
+                        Box(
+                            Modifier
+                                .fillMaxSize()
+                                .background(Ink.copy(alpha = 0.72f)),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Column(
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                modifier = Modifier.padding(16.dp),
+                            ) {
+                                CircularProgressIndicator(color = Accent)
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    uvcLabel.ifBlank { "Conectando cámara USB3.0…" },
+                                    color = Paper,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                )
+                                Spacer(Modifier.height(12.dp))
+                                Button(
+                                    onClick = {
+                                        controller.releaseUsbForUvc()
+                                        uvcSession.retryConnect()
+                                    },
+                                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                                ) { Text("Reintentar cámara") }
+                            }
+                        }
+                    }
                 } else {
                     AndroidView(
                         factory = { ctx ->
@@ -366,8 +399,9 @@ fun CaptureScreen(
                                     val bmp = if (useUvc && uvcSession != null) {
                                         withContext(Dispatchers.IO) {
                                             uvcSession.applyLightMode(mode)
-                                            // Eng-menu UART (/dev/ttyS1) backup if XU silent
-                                            runCatching { controller.applyLightMode(mode) }
+                                            if (controller.usingSerial) {
+                                                runCatching { controller.applyLightMode(mode) }
+                                            }
                                         }
                                         delay(350)
                                         withContext(Dispatchers.IO) {

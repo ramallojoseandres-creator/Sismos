@@ -126,7 +126,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 mj008Detection = detection
                 lightController.setCameraVariant(detection.cameraVariant)
                 hardwareDiagnostics = detection.diagnostics
-                val ok = lightController.open()
+                // USB-XU and UVC share one device — never keep LED USB open when analyzer cam present.
+                if (detection.usbXuCameraPresent) {
+                    lightController.releaseUsbForUvc()
+                }
+                val ok = if (detection.usbXuCameraPresent) {
+                    lightController.openSerialOnly()
+                } else {
+                    lightController.open()
+                }
                 hardwareStatus = if (ok) {
                     buildString {
                         append("MJ-008 listo · LED ${lightController.backendLabel}")

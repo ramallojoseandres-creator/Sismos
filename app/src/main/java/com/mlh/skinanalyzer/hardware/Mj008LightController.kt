@@ -56,6 +56,25 @@ class Mj008LightController(
         active = null
     }
 
+    /** USB-XU and UVC cannot hold the same device — release before [Mj008UvcSession]. */
+    fun releaseUsbForUvc() {
+        runCatching { usb.close() }
+        if (active === usb) active = null
+    }
+
+    /** LED via UART while UVC owns USB (MJ-008 ttyS1 @ 9600). */
+    fun openSerialOnly(): Boolean {
+        releaseUsbForUvc()
+        return if (serial.open()) {
+            active = serial
+            lastError = null
+            true
+        } else {
+            lastError = serial.lastError
+            false
+        }
+    }
+
     override fun turnOff() {
         active?.turnOff()
     }

@@ -127,7 +127,6 @@ class Mj008UvcSession(
 
     fun start() {
         if (!started.compareAndSet(false, true)) {
-            // Already started — still re-probe devices (hotplug / late permission).
             probeAttachedDevices()
             return
         }
@@ -138,9 +137,15 @@ class Mj008UvcSession(
         }
         previewView?.onResume()
         usbMonitor?.register()
-        // Devices already plugged in may not fire onAttach until we ask.
-        mainHandler.postDelayed({ probeAttachedDevices() }, 500)
-        mainHandler.postDelayed({ probeAttachedDevices() }, 2000)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 300)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 1500)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 3500)
+    }
+
+    fun retryConnect() {
+        ready = CompletableDeferred()
+        lastStatus = "UVC: reintentando…"
+        probeAttachedDevices()
     }
 
     private fun probeAttachedDevices() {
