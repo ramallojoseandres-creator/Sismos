@@ -6,7 +6,10 @@ import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import com.mlh.skinanalyzer.data.CareGuide
+import com.mlh.skinanalyzer.data.ClinicProfile
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.data.ProductRec
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -20,11 +23,16 @@ object ReportGenerator {
         result: SkinAnalysisResult,
         moisture: Float?,
         sessionTime: Long = System.currentTimeMillis(),
+        clinic: ClinicProfile = ClinicProfile(),
+        guides: List<CareGuide> = emptyList(),
+        products: List<ProductRec> = emptyList(),
     ): String {
         val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES"))
         val sb = StringBuilder()
-        sb.appendLine("Dra María Laura Hernández Skin Analyzer Pro")
-        sb.appendLine("Médico Cirujano · Informe de análisis de piel")
+        sb.appendLine(clinic.doctorName)
+        sb.appendLine(clinic.clinicName)
+        if (clinic.specialty.isNotBlank()) sb.appendLine(clinic.specialty)
+        sb.appendLine("Skin Analyzer Pro · 100% offline (sin servidor chino)")
         sb.appendLine("────────────────────────────────────────")
         sb.appendLine("Paciente: ${patient.name}")
         sb.appendLine("Sexo: ${patient.gender} · Edad: ${patient.age}")
@@ -38,6 +46,10 @@ object ReportGenerator {
         sb.appendLine("Edad cutánea estimada: ${result.skinAge} años")
         moisture?.let { sb.appendLine("Humedad medida: ${"%.1f".format(it)}%") }
         sb.appendLine()
+        sb.appendLine("PROPORCIONES FACIALES (3 tercios / 5 ojos)")
+        sb.appendLine(result.facialRatioNote)
+        result.facial?.let { sb.appendLine(it.summary) }
+        sb.appendLine()
         sb.appendLine("INDICADORES (nivel 1–5; mayor = más atención)")
         result.metrics.forEach { m ->
             sb.appendLine(
@@ -49,10 +61,33 @@ object ReportGenerator {
             sb.appendLine("  Recomendación: ${m.recommendation}")
             sb.appendLine()
         }
-        sb.appendLine(result.facialRatioNote)
-        sb.appendLine()
-        sb.appendLine("Este informe es orientativo para consulta estética y no sustituye diagnóstico médico.")
-        sb.appendLine("— Dra. María Laura Hernández · Skin Analyzer Pro")
+        if (guides.isNotEmpty()) {
+            sb.appendLine("GUÍAS DE CUIDADO (catálogo local)")
+            guides.forEach { g ->
+                sb.appendLine("• ${g.title}: ${g.body}")
+            }
+            sb.appendLine()
+        }
+        if (products.isNotEmpty()) {
+            sb.appendLine("PRODUCTOS SUGERIDOS (catálogo local)")
+            products.forEach { p ->
+                sb.appendLine("• ${p.name} [${p.category}] — ${p.description}")
+                if (p.howToUse.isNotBlank()) sb.appendLine("  Uso: ${p.howToUse}")
+            }
+            sb.appendLine()
+        }
+        sb.appendLine(clinic.footerNote)
+        if (clinic.phone.isNotBlank() || clinic.whatsapp.isNotBlank() || clinic.email.isNotBlank()) {
+            sb.appendLine(
+                listOfNotNull(
+                    clinic.phone.takeIf { it.isNotBlank() }?.let { "Tel $it" },
+                    clinic.whatsapp.takeIf { it.isNotBlank() }?.let { "WhatsApp $it" },
+                    clinic.email.takeIf { it.isNotBlank() },
+                ).joinToString(" · "),
+            )
+        }
+        if (clinic.address.isNotBlank()) sb.appendLine(clinic.address)
+        sb.appendLine("— ${clinic.doctorName} · Skin Analyzer Pro")
         return sb.toString()
     }
 
@@ -62,6 +97,9 @@ object ReportGenerator {
         result: SkinAnalysisResult,
         moisture: Float?,
         sessionTime: Long = System.currentTimeMillis(),
+        clinic: ClinicProfile = ClinicProfile(),
+        guides: List<CareGuide> = emptyList(),
+        products: List<ProductRec> = emptyList(),
     ): File {
         val doc = PdfDocument()
         val pageWidth = 595
@@ -113,10 +151,11 @@ object ReportGenerator {
             }
         }
 
-        canvas.drawText("Dra María Laura Hernández", 40f, y, titlePaint)
-        y += 22f
-        canvas.drawText("Skin Analyzer Pro — Informe de piel", 40f, y, body)
-        y += 18f
+        canvas.drawText(clinic.doctorName, 40f, y, titlePaint)
+        y += 20f
+        drawWrapped(clinic.clinicName, body)
+        drawWrapped("Skin Analyzer Pro — Informe offline", muted)
+        y += 6f
         canvas.drawLine(40f, y, pageWidth - 40f, y, body)
         y += 20f
         drawWrapped("Paciente: ${patient.name} · ${patient.gender} · ${patient.age} años", body)
@@ -129,6 +168,11 @@ object ReportGenerator {
         y += 6f
         drawWrapped("Tipo: ${result.skinType} · Edad cutánea: ${result.skinAge}", body)
         moisture?.let { drawWrapped("Humedad: ${"%.1f".format(it)}%", body) }
+        y += 8f
+        drawWrapped("Proporciones faciales", titlePaint.apply { textSize = 12f })
+        titlePaint.textSize = 16f
+        drawWrapped(result.facialRatioNote, muted)
+        result.facial?.let { drawWrapped(it.summary, body) }
         y += 10f
         result.metrics.forEach { m ->
             newPageIfNeeded(70f)
@@ -140,8 +184,24 @@ object ReportGenerator {
             drawWrapped("Recomendación: ${m.recommendation}", body)
             y += 8f
         }
+        if (guides.isNotEmpty()) {
+            y += 6f
+            drawWrapped("Guías de cuidado (local)", titlePaint.apply { textSize = 12f })
+            titlePaint.textSize = 16f
+            guides.forEach { g ->
+                drawWrapped("${g.title}: ${g.body}", muted)
+            }
+        }
+        if (products.isNotEmpty()) {
+            y += 6f
+            drawWrapped("Productos sugeridos (local)", titlePaint.apply { textSize = 12f })
+            titlePaint.textSize = 16f
+            products.forEach { p ->
+                drawWrapped("${p.name} — ${p.description}", body)
+            }
+        }
         y += 10f
-        drawWrapped("Informe orientativo. No sustituye diagnóstico médico.", muted)
+        drawWrapped(clinic.footerNote, muted)
         doc.finishPage(page)
 
         val dir = File(context.cacheDir, "reports").apply { mkdirs() }

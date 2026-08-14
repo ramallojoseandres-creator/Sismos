@@ -31,6 +31,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.mutableStateOf
@@ -47,6 +48,8 @@ import com.mlh.skinanalyzer.ui.theme.Paper
 @Composable
 fun PatientsScreen(
     patients: List<Patient>,
+    searchQuery: String,
+    onSearch: (String) -> Unit,
     onBack: () -> Unit,
     onAdd: () -> Unit,
     onOpen: (Long) -> Unit,
@@ -75,10 +78,23 @@ fun PatientsScreen(
                 Text("Nuevo")
             }
         }
+        Spacer(Modifier.height(8.dp))
+        OutlinedTextField(
+            value = searchQuery,
+            onValueChange = onSearch,
+            modifier = Modifier.fillMaxWidth(),
+            label = { Text("Buscar nombre, teléfono o email") },
+            singleLine = true,
+            shape = RoundedCornerShape(4.dp),
+        )
         Spacer(Modifier.height(12.dp))
         if (patients.isEmpty()) {
             Text(
-                "Aún no hay pacientes. Crea uno para iniciar el análisis.",
+                if (searchQuery.isBlank()) {
+                    "Aún no hay pacientes. Crea uno para iniciar el análisis."
+                } else {
+                    "Sin resultados para “$searchQuery”."
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = Ink.copy(alpha = 0.6f),
                 modifier = Modifier.padding(24.dp),

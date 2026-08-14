@@ -8,11 +8,13 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mlh.skinanalyzer.ui.screens.CaptureScreen
+import com.mlh.skinanalyzer.ui.screens.CompareScreen
 import com.mlh.skinanalyzer.ui.screens.HomeScreen
 import com.mlh.skinanalyzer.ui.screens.PatientFormScreen
 import com.mlh.skinanalyzer.ui.screens.PatientsScreen
 import com.mlh.skinanalyzer.ui.screens.ReportScreen
 import com.mlh.skinanalyzer.ui.screens.SessionListScreen
+import com.mlh.skinanalyzer.ui.screens.SettingsScreen
 
 object Routes {
     const val HOME = "home"
@@ -21,6 +23,8 @@ object Routes {
     const val CAPTURE = "capture/{patientId}"
     const val REPORT = "report/{sessionId}"
     const val SESSIONS = "sessions/{patientId}"
+    const val COMPARE = "compare/{patientId}"
+    const val SETTINGS = "settings"
 }
 
 @Composable
@@ -31,13 +35,30 @@ fun AppNav(vm: AppViewModel = viewModel()) {
             HomeScreen(
                 onNewAnalysis = { nav.navigate("patient_form?id=-1") },
                 onPatients = { nav.navigate(Routes.PATIENTS) },
+                onSettings = { nav.navigate(Routes.SETTINGS) },
+                onOpenSession = { id -> nav.navigate("report/$id") },
+                recentSessions = vm.recentSessions,
+                clinicName = vm.clinic.doctorName,
                 hardwareStatus = vm.hardwareStatus,
+                onRefreshHardware = { vm.refreshHardware() },
+            )
+        }
+        composable(Routes.SETTINGS) {
+            SettingsScreen(
+                clinic = vm.clinic,
+                indicators = vm.indicatorPrefs,
+                hardwareStatus = vm.hardwareStatus,
+                onBack = { nav.popBackStack() },
+                onSaveClinic = { vm.saveClinic(it) },
+                onToggleIndicator = { key, enabled -> vm.setIndicatorEnabled(key, enabled) },
                 onRefreshHardware = { vm.refreshHardware() },
             )
         }
         composable(Routes.PATIENTS) {
             PatientsScreen(
                 patients = vm.patients,
+                searchQuery = vm.searchQuery,
+                onSearch = { vm.updateSearchQuery(it) },
                 onBack = { nav.popBackStack() },
                 onAdd = { nav.navigate("patient_form?id=-1") },
                 onOpen = { id -> nav.navigate("sessions/$id") },
@@ -104,6 +125,19 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onBack = { nav.popBackStack() },
                 onOpen = { sid -> nav.navigate("report/$sid") },
                 onNew = { nav.navigate("capture/$patientId") },
+                onCompare = { nav.navigate("compare/$patientId") },
+                onDelete = { vm.deleteSession(it) },
+            )
+        }
+        composable(
+            route = Routes.COMPARE,
+            arguments = listOf(navArgument("patientId") { type = NavType.LongType }),
+        ) { entry ->
+            val patientId = entry.arguments!!.getLong("patientId")
+            CompareScreen(
+                patientId = patientId,
+                vm = vm,
+                onBack = { nav.popBackStack() },
             )
         }
     }

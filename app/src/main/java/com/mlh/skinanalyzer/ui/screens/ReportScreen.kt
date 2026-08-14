@@ -79,6 +79,8 @@ fun ReportScreen(
     var result by remember { mutableStateOf<SkinAnalysisResult?>(null) }
     var images by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var tab by remember { mutableIntStateOf(0) }
+    var guides by remember { mutableStateOf<List<com.mlh.skinanalyzer.data.CareGuide>>(emptyList()) }
+    var products by remember { mutableStateOf<List<com.mlh.skinanalyzer.data.ProductRec>>(emptyList()) }
 
     LaunchedEffect(sessionId) {
         val s = vm.getSession(sessionId) ?: return@LaunchedEffect
@@ -91,6 +93,11 @@ fun ReportScreen(
             val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
             Gson().fromJson<Map<String, String>>(s.imagePathsJson, type) ?: emptyMap()
         }.getOrDefault(emptyMap())
+        val keys = result?.priorityKeys.orEmpty().ifEmpty {
+            result?.metrics?.sortedByDescending { it.score }?.take(3)?.map { it.key }.orEmpty()
+        }
+        guides = vm.guidesFor(keys)
+        products = vm.productsFor(keys)
     }
 
     val p = patient
@@ -181,7 +188,7 @@ fun ReportScreen(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("Resumen", "Superficial", "Profunda").forEachIndexed { i, label ->
+            listOf("Resumen", "Superficial", "Profunda", "3/5 ojos", "Cuidado").forEachIndexed { i, label ->
                 val selected = tab == i
                 Button(
                     onClick = { tab = i },
@@ -253,11 +260,73 @@ fun ReportScreen(
                         Text("Prioridades", style = MaterialTheme.typography.titleLarge)
                         Text(s.recommendations, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(8.dp))
-                        Text(r.facialRatioNote, style = MaterialTheme.typography.bodyMedium, color = Ink.copy(alpha = 0.6f))
+                        Text("Análisis 100% local · sin ai.aiskin.vip", style = MaterialTheme.typography.bodyMedium, color = Ink.copy(alpha = 0.5f))
                     }
                 }
                 1 -> MetricList(r.metrics.filter { it.layer == "superficial" })
-                else -> MetricList(r.metrics.filter { it.layer == "profunda" })
+                2 -> MetricList(r.metrics.filter { it.layer == "profunda" })
+                3 -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
+                        Text("Proporciones faciales (offline)", style = MaterialTheme.typography.titleLarge)
+                        Spacer(Modifier.height(6.dp))
+                        Text(r.facialRatioNote, style = MaterialTheme.typography.bodyLarge)
+                        r.facial?.let { f ->
+                            Spacer(Modifier.height(8.dp))
+                            Text(f.summary, style = MaterialTheme.typography.bodyMedium, color = Accent)
+                            Spacer(Modifier.height(8.dp))
+                            Text(
+                                "Tercios: ${(f.upperThird * 100).toInt()}% / ${(f.middleThird * 100).toInt()}% / ${(f.lowerThird * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                            Text(
+                                "Ancho ≈ ${"%.1f".format(f.eyeUnits)} ojos · simetría ${(f.symmetryScore * 100).toInt()}%",
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
+                }
+                else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    item {
+                        Text("Guías de cuidado (catálogo local)", style = MaterialTheme.typography.titleLarge)
+                    }
+                    items(guides) { g ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(Paper, RoundedCornerShape(4.dp))
+                                .padding(12.dp),
+                        ) {
+                            Text(g.title, style = MaterialTheme.typography.titleLarge)
+                            Text(g.body, style = MaterialTheme.typography.bodyMedium)
+                        }
+                    }
+                    item {
+                        Spacer(Modifier.height(6.dp))
+                        Text("Productos sugeridos (catálogo local)", style = MaterialTheme.typography.titleLarge)
+                    }
+                    items(products) { p ->
+                        Column(
+                            Modifier
+                                .fillMaxWidth()
+                                .background(Paper, RoundedCornerShape(4.dp))
+                                .padding(12.dp),
+                        ) {
+                            Text(p.name, style = MaterialTheme.typography.titleLarge)
+                            Text("${p.category} · ${p.description}", style = MaterialTheme.typography.bodyMedium)
+                            if (p.howToUse.isNotBlank()) {
+                                Text("Uso: ${p.howToUse}", style = MaterialTheme.typography.bodyMedium, color = Accent)
+                            }
+                        }
+                    }
+                    if (guides.isEmpty() && products.isEmpty()) {
+                        item {
+                            Text(
+                                "Sin guías para las prioridades actuales.",
+                                color = Ink.copy(alpha = 0.55f),
+                            )
+                        }
+                    }
+                }
             }
         }
     }
@@ -302,6 +371,8 @@ fun SessionListScreen(
     onBack: () -> Unit,
     onOpen: (Long) -> Unit,
     onNew: () -> Unit,
+    onCompare: () -> Unit,
+    onDelete: (AnalysisSession) -> Unit,
 ) {
     var sessions by remember { mutableStateOf<List<AnalysisSession>>(emptyList()) }
     var patient by remember { mutableStateOf<Patient?>(null) }
@@ -331,6 +402,12 @@ fun SessionListScreen(
             colors = ButtonDefaults.buttonColors(containerColor = Accent),
             shape = RoundedCornerShape(4.dp),
         ) { Text("Nuevo análisis") }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = onCompare,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(4.dp),
+        ) { Text("Comparar historial") }
         Spacer(Modifier.height(12.dp))
         if (sessions.isEmpty()) {
             Text("Sin análisis previos.", color = Ink.copy(alpha = 0.55f))
@@ -352,12 +429,18 @@ fun SessionListScreen(
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Spacer(Modifier.height(8.dp))
-                        Button(
-                            onClick = { onOpen(sessionItem.id) },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                            shape = RoundedCornerShape(4.dp),
-                        ) { Text("Ver informe") }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = { onOpen(sessionItem.id) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                                shape = RoundedCornerShape(4.dp),
+                            ) { Text("Ver informe") }
+                            OutlinedButton(
+                                onClick = { onDelete(sessionItem) },
+                                shape = RoundedCornerShape(4.dp),
+                            ) { Text("Borrar") }
+                        }
                     }
                 }
             }

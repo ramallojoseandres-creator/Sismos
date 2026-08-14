@@ -44,6 +44,7 @@ data class SkinAnalysisResult(
     val overview: String,
     val facialRatioNote: String,
     val priorityKeys: List<String>,
+    val facial: FacialProportionAnalyzer.Result? = null,
 )
 
 /**
@@ -160,15 +161,16 @@ object SkinAnalyzer {
         val skinAge = estimateSkinAge(patientAge, avgSeverity, wrinkles, collagen, uvSpots)
         val priority = metrics.sortedByDescending { it.score }.take(3).map { it.key }
         val overview = buildOverview(skinType, skinAge, priority, metrics)
-        val ratio = "Proporciones faciales dentro de rango armónico habitual para consulta estética."
+        val facial = FacialProportionAnalyzer.analyze(white)
 
         return SkinAnalysisResult(
             metrics = metrics,
             skinType = skinType,
             skinAge = skinAge,
             overview = overview,
-            facialRatioNote = ratio,
+            facialRatioNote = facial.note,
             priorityKeys = priority,
+            facial = facial,
         )
     }
 

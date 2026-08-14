@@ -1,58 +1,52 @@
 # Dra María Laura Hernández Skin Analyzer Pro
 
-App Android **personal (sin login)** pensada **exclusivamente para el hardware MJ-008 Maokin Miaojin** (tablet + cabina de luces del analizador de piel).
+App Android **personal, 100% offline** para el hardware **MJ-008 Maokin Miaojin**.  
+Reemplaza el software OEM chino (Miaojing / `com.ym.smart.skins`) **sin depender de** `ai.aiskin.vip`, `device.aiskin.vip`, Aliyun OSS, login ni licencia en la nube.
 
-## Hardware objetivo: MJ-008
+## Qué sustituye del OEM
 
-| Pieza | Detalle en MJ-008 |
-|--------|-------------------|
-| Modelo | Maokin Miaojin **MJ-008** |
-| Luces | UART `/dev/ttyS4` @ **115200** (fallback legacy 9600 `AA 66 … 23`) |
-| Comandos LED | `TCCCMD_W/N/P/UV/WS` + `%`, `TCCMD_OFF`, `TCCMD_PWM_SETL` |
-| Cámara USB | PIDs familia Moji/MJ: **25441, 25443, 25456, 52243 (SXW)** |
-| Espectros | White, XPL, PPL, Wood's, UV + mapas Blue / Brown / Red |
-| Indicadores | 14 (superficial + profunda), niveles de cuidado 1–5 |
+| Función OEM (nube china) | En esta app (local) |
+|--------------------------|---------------------|
+| Login / registro / tienda | Sin login · perfil de consultorio en Room |
+| Miembros en servidor | Pacientes en SQLite (Room) |
+| Historial en nube | Sesiones locales + borrar |
+| Comparación de historial | Pantalla Comparar (antes/después) |
+| AI `landmark-lai/skin_detection` | Análisis multiespectral offline |
+| `three_five_eyes` | Proporciones 3/5 ojos offline |
+| Artículos / productos API | Catálogo local (guías + productos) |
+| Indicadores configurables | Ajustes → interruptores |
+| Aliyun OSS / uploads | Archivos solo en la tablet |
+| PDF + WeChat | PDF + Email / WhatsApp Business |
 
-La app detecta al arrancar si el serial y la cámara USB del MJ-008 están presentes, y aplica la curva de brillo LED correspondiente al tipo de cámara Moji.
+## Hardware MJ-008
 
-## Qué incluye
+- Luces: **USB-XU** (protocolo OEM `00 78 cmd FF`); UART `/dev/ttyS4` solo como respaldo
+- Cámara: USB UVC (`USB3.0` / `USB Camera`) · 8 luces físicas
+- 14 indicadores (superficial + profunda)
 
-- Fichas de pacientes locales (Room), sin cuenta ni nube obligatoria
-- Captura multiespectral en la cabina MJ-008
-- Informe PDF + envío por **Email** y **WhatsApp Business**
-- Branding MLH (logo monograma)
+## Base de datos propia (Room)
 
-## Instalar en la tablet del MJ-008
+`mlh_skin_analyzer.db` en el dispositivo:
 
-1. Compilar el APK: `./gradlew :app:assembleDebug`
-2. Copiar e instalar en la tablet del analizador
-3. Abrir la app — no pide login
-4. En inicio debe verse el estado **MJ-008** (LED + cámara)
+- `patients` · `analysis_sessions`
+- `clinic_profile` · `indicator_prefs`
+- `care_guides` · `products` (semilla local)
 
-### Permiso del puerto LED
+## Instalar
 
-En muchos firmwares MJ-008, `/dev/ttyS4` solo lo escribe una app de sistema. Si el estado indica “sin permiso”, la cámara sigue funcionando; para las luces hay que instalar como app de sistema o conceder acceso al puerto.
-
-## Compilar
-
-### En GitHub Actions (recomendado)
-Cada push/PR a esta rama dispara el workflow **Build MJ-008 APK**.
-El APK queda en la pestaña **Actions → artefacto** `MLH-Skin-Analyzer-Pro-MJ008-debug`.
-
-También puedes lanzarlo a mano: Actions → Build MJ-008 APK → Run workflow.
-
-### Local
 ```bash
-export ANDROID_HOME=$HOME/android-sdk
 ./gradlew :app:assembleDebug
 # APK: app/build/outputs/apk/debug/app-debug.apk
 ```
 
+GitHub Actions publica el artefacto `MLH-Skin-Analyzer-Pro-MJ008-debug`.
+
 ## Flujo
 
-1. **Nuevo análisis** → ficha (edad obligatoria)
-2. **Capturar** en el MJ-008 (mentón en soporte, ojos cerrados)
-3. Revisar informe y compartir
+1. Ajustes → datos del consultorio (opcional)
+2. Nuevo análisis → paciente → captura 8 luces
+3. Informe (resumen / capas / 3-5 ojos / cuidado) → Email o WhatsApp
+4. Historial → comparar dos sesiones
 
 ## Nota clínica
 

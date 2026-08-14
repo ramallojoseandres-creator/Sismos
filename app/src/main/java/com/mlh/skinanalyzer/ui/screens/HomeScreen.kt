@@ -8,6 +8,7 @@ import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -34,6 +36,7 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -43,16 +46,23 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.mlh.skinanalyzer.R
+import com.mlh.skinanalyzer.data.AnalysisSession
 import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
-import com.mlh.skinanalyzer.ui.theme.Gold
 import com.mlh.skinanalyzer.ui.theme.Ink
 import com.mlh.skinanalyzer.ui.theme.Paper
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 @Composable
 fun HomeScreen(
     onNewAnalysis: () -> Unit,
     onPatients: () -> Unit,
+    onSettings: () -> Unit,
+    onOpenSession: (Long) -> Unit,
+    recentSessions: List<AnalysisSession>,
+    clinicName: String,
     hardwareStatus: String,
     onRefreshHardware: () -> Unit,
 ) {
@@ -66,6 +76,7 @@ fun HomeScreen(
         ),
         label = "glow",
     )
+    val df = remember { SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES")) }
 
     Box(
         modifier = Modifier
@@ -80,21 +91,26 @@ fun HomeScreen(
             Modifier
                 .fillMaxSize()
                 .verticalScroll(rememberScrollState())
-                .padding(horizontal = 24.dp, vertical = 28.dp),
+                .padding(horizontal = 24.dp, vertical = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Spacer(Modifier.weight(1f))
+                IconButton(onClick = onSettings) {
+                    Icon(Icons.Outlined.Settings, contentDescription = "Ajustes")
+                }
+            }
             Image(
                 painter = painterResource(R.drawable.logo_mlh),
                 contentDescription = "Logo MLH",
                 modifier = Modifier
-                    .fillMaxWidth(0.55f)
-                    .alpha(0.9f + glow * 0.1f)
-                    .padding(top = 8.dp),
+                    .fillMaxWidth(0.5f)
+                    .alpha(0.9f + glow * 0.1f),
                 contentScale = ContentScale.Fit,
             )
-            Spacer(Modifier.height(20.dp))
+            Spacer(Modifier.height(16.dp))
             Text(
-                "Dra María Laura Hernández",
+                clinicName.ifBlank { "Dra María Laura Hernández" },
                 style = MaterialTheme.typography.displayLarge,
                 color = Ink,
                 textAlign = TextAlign.Center,
@@ -113,14 +129,14 @@ fun HomeScreen(
                 color = Accent,
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(8.dp))
             Text(
-                "MJ-008 Maokin Miaojin · uso personal, sin login",
+                "MJ-008 · 100% offline · base de datos propia",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Ink.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
             )
-            Spacer(Modifier.height(36.dp))
+            Spacer(Modifier.height(28.dp))
             Button(
                 onClick = onNewAnalysis,
                 modifier = Modifier
@@ -131,7 +147,7 @@ fun HomeScreen(
             ) {
                 Icon(Icons.Outlined.Face, contentDescription = null)
                 Spacer(Modifier.width(10.dp))
-                Text("Nuevo análisis AI")
+                Text("Nuevo análisis")
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(
@@ -145,7 +161,33 @@ fun HomeScreen(
                 Spacer(Modifier.width(10.dp))
                 Text("Pacientes e historial")
             }
-            Spacer(Modifier.height(24.dp))
+            Spacer(Modifier.height(20.dp))
+            if (recentSessions.isNotEmpty()) {
+                Text(
+                    "Últimos análisis (local)",
+                    style = MaterialTheme.typography.titleLarge,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(8.dp))
+                recentSessions.take(5).forEach { s ->
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .background(Cream, RoundedCornerShape(4.dp))
+                            .clickable { onOpenSession(s.id) }
+                            .padding(12.dp),
+                    ) {
+                        Text(df.format(Date(s.createdAt)), style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            "${s.skinType} · edad cutánea ${s.skinAge}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Ink.copy(alpha = 0.6f),
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.fillMaxWidth(),
