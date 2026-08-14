@@ -260,17 +260,9 @@ class UsbXuLightController(
         const val ARG_OFF = 0x00
 
         fun isMj008Camera(device: UsbDevice): Boolean {
-            val serial = runCatching { device.serialNumber }.getOrNull().orEmpty()
-            val product = runCatching { device.productName }.getOrNull().orEmpty()
-            if (serial.equals("USB3.0", ignoreCase = true)) return true
-            if (product.equals("USB3.0", ignoreCase = true)) return true
-            if (product.equals("USB Camera", ignoreCase = true)) return true
-            if (product.contains("Camera", ignoreCase = true)) return true
-            if (product.contains("UVC", ignoreCase = true)) return true
-            if (device.productId in Mj008Hardware.knownCameraProductIds) return true
-            // MJ-008 tablets sometimes expose the analyzer cam without OEM name strings.
-            if (hasVideoInterface(device)) return true
-            return false
+            // Do NOT treat every UVC device as the analyzer — Dual USB camera firmware
+            // exposes a secondary cam that has no LED XU and wrong orientation.
+            return Mj008UsbDevices.isAnalyzerCamera(device)
         }
 
         fun hasVideoInterface(device: UsbDevice): Boolean {

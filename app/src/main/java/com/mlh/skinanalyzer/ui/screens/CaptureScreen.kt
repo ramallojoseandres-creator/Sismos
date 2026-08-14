@@ -159,6 +159,18 @@ fun CaptureScreen(
         }
     }
 
+    var moistureText by remember { mutableStateOf("") }
+    var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
+    var status by remember {
+        mutableStateOf(
+            if (useUvc) {
+                "Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece."
+            } else {
+                "Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar."
+            },
+        )
+    }
+
     LaunchedEffect(Unit) {
         vm.markCaptureActive(true)
     }
@@ -185,10 +197,17 @@ fun CaptureScreen(
 
     LaunchedEffect(useUvc, uvcSession) {
         if (!useUvc) return@LaunchedEffect
+        var lit = false
         while (true) {
             uvcLabel = uvcSession?.statusLabel.orEmpty()
-            uvcReady = uvcSession?.isReady == true
-            delay(500)
+            val readyNow = uvcSession?.isReady == true
+            uvcReady = readyNow
+            if (readyNow && !lit) {
+                lit = true
+                runCatching { uvcSession?.applyWhiteLight() }
+                status = "Cámara frontal del analizador lista. Coloque el mentón y pulse Iniciar."
+            }
+            delay(400)
         }
     }
 
@@ -222,17 +241,6 @@ fun CaptureScreen(
     val captured = remember { mutableStateMapOf<String, Pair<String, Bitmap?>>() }
     var currentIndex by remember { mutableIntStateOf(0) }
     var capturing by remember { mutableStateOf(false) }
-    var status by remember {
-        mutableStateOf(
-            if (useUvc) {
-                "Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece, luego pulse Iniciar."
-            } else {
-                "Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar."
-            },
-        )
-    }
-    var moistureText by remember { mutableStateOf("") }
-    var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
     val progress by animateFloatAsState(
         targetValue = captured.size / 8f,
@@ -321,22 +329,20 @@ fun CaptureScreen(
                                                 runCatching {
                                                     val session = vm.prepareUvcSession(act)
                                                     uvcSession = session
-                                                    session.retryConnect()
+                                                    // update{} will bind+start when session is set
                                                 }
                                             }
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                                ) { Text("Reintentar cámara") }
+                                ) { Text("Reintentar cámara frontal USB3.0") }
                                 Spacer(Modifier.height(8.dp))
-                                OutlinedButton(
-                                    onClick = {
-                                        vm.releaseUvcSession()
-                                        uvcSession = null
-                                        uvcBound = false
-                                        useUvc = false
-                                    },
-                                ) { Text("Usar cámara alternativa") }
+                                Text(
+                                    "No use la cámara de la tablet — solo la USB3.0 del analizador enciende las luces.",
+                                    color = Paper.copy(alpha = 0.75f),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    textAlign = TextAlign.Center,
+                                )
                             }
                         }
                     }
@@ -427,9 +433,10 @@ fun CaptureScreen(
             )
             Text(
                 when {
-                    useUvc -> uvcLabel.ifBlank { "UVC MJ-008" }
+                    useUvc && uvcReady -> "Luces vía USB-XU en cámara frontal · $uvcLabel"
+                    useUvc -> uvcLabel.ifBlank { "Buscando USB3.0 frontal (vid 3804 / pid 12416)…" }
                     controller.isOpen -> "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
-                    else -> "MJ-008 LED: no disponible — captura igual"
+                    else -> "MJ-008 LED: esperando cámara del analizador"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),

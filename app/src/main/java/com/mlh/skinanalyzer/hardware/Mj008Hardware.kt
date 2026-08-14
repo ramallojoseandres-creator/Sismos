@@ -35,7 +35,11 @@ object Mj008Hardware {
     /** Preview size used by OEM UVC handler. */
     const val PREVIEW_WIDTH = 1600
     const val PREVIEW_HEIGHT = 1200
-    const val PREVIEW_ORIENTATION = 90
+    /**
+     * Engineering menu: Camera Rotation = 0 (with Screen Rotation 270 / Force USB front).
+     * Using 90 opened the Dual-USB secondary sideways; analyzer front cam is 0°.
+     */
+    const val PREVIEW_ORIENTATION = 0
 
     /**
      * USB camera product IDs seen on Moji / MJ-family analyzers.
