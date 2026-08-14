@@ -58,7 +58,7 @@ class Mj008LightController(
 
     /** USB-XU and UVC cannot hold the same device — release before [Mj008UvcSession]. */
     fun releaseUsbForUvc() {
-        runCatching { usb.close() }
+        runCatching { usb.releaseForUvcHandoff() }
         if (active === usb) active = null
     }
 

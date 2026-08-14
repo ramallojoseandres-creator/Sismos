@@ -142,17 +142,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun getUvcSession(): Mj008UvcSession? = uvcSession
 
     /**
-     * Hand off USB from LED (USB-XU) to UVC preview. Waits briefly so the MJ-008
-     * firmware releases the device (avoids "cámara offline" on re-entry).
+     * Hand off USB from LED (USB-XU) to UVC preview. All USB close/open work
+     * runs off the UI thread — MJ-008 firmware can block for seconds (ANR).
      */
     suspend fun prepareUvcSession(activity: android.app.Activity): Mj008UvcSession {
-        releaseUvcSession()
-        lightController.releaseUsbForUvc()
-        kotlinx.coroutines.delay(450)
         withContext(Dispatchers.IO) {
-            runCatching {
-                lightController.openSerialOnly()
-            }
+            releaseUvcSession()
+            lightController.releaseUsbForUvc()
+        }
+        kotlinx.coroutines.delay(350)
+        withContext(Dispatchers.IO) {
+            runCatching { lightController.openSerialOnly() }
         }
         return Mj008UvcSession(activity).also { uvcSession = it }
     }

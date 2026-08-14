@@ -95,6 +95,18 @@ class UsbXuLightController(
             if (isOpen) turnOff()
         } catch (_: Exception) {
         }
+        releaseHandles()
+    }
+
+    /**
+     * Fast release before UVC open — skip LED turnOff (controlTransfer can hang
+     * and ANR the UI when the same USB device is about to be claimed by UVC).
+     */
+    fun releaseForUvcHandoff() {
+        releaseHandles()
+    }
+
+    private fun releaseHandles() {
         try {
             claimedInterface?.let { connection?.releaseInterface(it) }
         } catch (_: Exception) {

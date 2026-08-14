@@ -169,7 +169,7 @@ fun CaptureScreen(
 
     LaunchedEffect(Unit) { vm.markCaptureActive(true) }
 
-    // Reliable path: wait for TextureView, then prepare+bind+start on main thread.
+    // TextureView ready → prepare USB off-main → bind+start (openDevice on USB I/O thread).
     LaunchedEffect(useUvc, textureView, uvcStartToken, demoMode) {
         if (demoMode || !useUvc) return@LaunchedEffect
         val act = activity
@@ -184,7 +184,6 @@ fun CaptureScreen(
         }
 
         uvcReady = false
-        uvcLabel = "Liberando USB y abriendo cámara frontal… (v${BuildConfig.VERSION_NAME})"
         val usbSummary = runCatching {
             val mgr = context.getSystemService(Context.USB_SERVICE) as UsbManager
             val list = mgr.deviceList.values.toList()
@@ -192,22 +191,30 @@ fun CaptureScreen(
             "USB=${list.size} pick=${pick?.let { UsbXuLightController.describe(it.device) + " s=" + it.score } ?: "ninguno"}"
         }.getOrDefault("USB=?")
         Log.i("Capture", usbSummary)
-        uvcLabel = "$usbSummary — preparando…"
 
         runCatching {
+            uvcLabel = "$usbSummary — liberando USB…"
             val session = vm.prepareUvcSession(act)
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
-            withContext(Dispatchers.Main) {
+            uvcLabel = "$usbSummary — creando handler…"
+            withContext(Dispatchers.Main.immediate) {
                 session.bindPreview(view)
+            }
+            uvcLabel = "$usbSummary — conectando (no cierre la app)…"
+            withContext(Dispatchers.Main.immediate) {
                 session.start()
             }
             uvcSession = session
             uvcLabel = session.statusLabel
             Log.i("Capture", "UVC bind+start done: ${session.statusLabel}")
-            repeat(20) {
+            // Poll while native open runs on USB I/O thread (can take several seconds).
+            repeat(40) {
                 delay(500)
                 uvcLabel = session.statusLabel
                 if (session.isReady) return@repeat
+            }
+            if (!session.isReady) {
+                uvcLabel = "${session.statusLabel} — pulse Reintentar si no hay imagen"
             }
         }.onFailure {
             Log.e("Capture", "UVC prepare/bind/start failed", it)
