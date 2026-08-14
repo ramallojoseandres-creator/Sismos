@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.Edit
 import androidx.compose.material.icons.outlined.Face
 import androidx.compose.material.icons.outlined.History
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -32,9 +33,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -56,6 +60,29 @@ fun PatientsScreen(
     onEdit: (Long) -> Unit,
     onDelete: (Patient) -> Unit,
 ) {
+    var pendingDelete by remember { mutableStateOf<Patient?>(null) }
+
+    pendingDelete?.let { target ->
+        AlertDialog(
+            onDismissRequest = { pendingDelete = null },
+            title = { Text("Eliminar paciente") },
+            text = {
+                Text("¿Eliminar a ${target.name} y todo su historial? Esta acción no se puede deshacer.")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onDelete(target)
+                        pendingDelete = null
+                    },
+                ) { Text("Eliminar") }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingDelete = null }) { Text("Cancelar") }
+            },
+        )
+    }
+
     Column(
         Modifier
             .fillMaxSize()
@@ -154,7 +181,7 @@ fun PatientsScreen(
                                 Spacer(Modifier.width(4.dp))
                                 Text("Editar")
                             }
-                            IconButton(onClick = { onDelete(p) }) {
+                            IconButton(onClick = { pendingDelete = p }) {
                                 Icon(Icons.Outlined.Delete, "Eliminar")
                             }
                         }

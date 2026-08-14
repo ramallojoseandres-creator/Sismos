@@ -239,6 +239,9 @@ class Mj008UvcSession(
             }
             lastStatus = "UVC: abriendo $desc (hilo USB, espere)…"
             Log.i(TAG, lastStatus)
+            if (ready.isCompleted && !isReady) {
+                ready = CompletableDeferred()
+            }
             usbIo.post {
                 val ctrl = try {
                     monitor.openDevice(device)
@@ -316,12 +319,15 @@ class Mj008UvcSession(
             handler.open(ctrlBlock)
             openedDevice.set(device)
             fun startSurface() {
+                if (!started.get()) return
+                val h = cameraHandler ?: return
                 val tex = view.surfaceTexture ?: return
                 previewSurface?.release()
                 previewSurface = Surface(tex)
-                handler.startPreview(previewSurface)
+                h.startPreview(previewSurface)
             }
             mainHandler.post {
+                if (!started.get()) return@post
                 if (view.surfaceTexture != null) {
                     startSurface()
                 } else {
@@ -332,7 +338,9 @@ class Mj008UvcSession(
                 Log.i(TAG, lastStatus)
                 opening.set(false)
                 completeReady(true)
-                mainHandler.postDelayed({ runCatching { applyWhiteLight() } }, 250)
+                mainHandler.postDelayed({
+                    if (started.get()) runCatching { applyWhiteLight() }
+                }, 250)
             }
         } catch (e: Exception) {
             opening.set(false)
@@ -367,12 +375,18 @@ class Mj008UvcSession(
         runCatching { turnOff() }
         runCatching { usbMonitor?.unregister() }
         previewView?.onPause()
+        mainHandler.removeCallbacksAndMessages(null)
     }
 
-    suspend fun awaitReady(timeoutMs: Long = 25_000): Boolean = try {
-        withTimeout(timeoutMs) { ready.await() }
-    } catch (_: Exception) {
-        isReady
+    /** Prefer live [isReady]; a prior failed complete must not block a later successful open. */
+    suspend fun awaitReady(timeoutMs: Long = 25_000): Boolean {
+        if (isReady) return true
+        return try {
+            withTimeout(timeoutMs) { ready.await() }
+            isReady
+        } catch (_: Exception) {
+            isReady
+        }
     }
 
     fun applyWhiteLight() {
@@ -423,6 +437,7 @@ class Mj008UvcSession(
     fun release() {
         stop()
         opening.set(false)
+        mainHandler.removeCallbacksAndMessages(null)
         runCatching { cameraHandler?.release() }
         runCatching { usbMonitor?.destroy() }
         previewSurface?.release()
@@ -439,7 +454,13 @@ class Mj008UvcSession(
     }
 
     private fun completeReady(ok: Boolean) {
-        if (!ready.isCompleted) ready.complete(ok)
+        // Always allow a later success after an earlier false complete.
+        if (!ready.isCompleted) {
+            ready.complete(ok)
+        } else if (ok && isReady) {
+            // Already completed false earlier — replace deferred for future awaiters.
+            ready = CompletableDeferred(true)
+        }
     }
 
     companion object {

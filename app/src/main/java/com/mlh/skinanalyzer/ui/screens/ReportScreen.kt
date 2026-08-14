@@ -102,14 +102,23 @@ fun ReportScreen(
     var products by remember { mutableStateOf<List<com.mlh.skinanalyzer.data.ProductRec>>(emptyList()) }
     var oemIndicators by remember { mutableStateOf<List<OemIndicatorResult>>(emptyList()) }
     var selectedMapIndex by remember { mutableIntStateOf(0) }
+    var loadFailed by remember { mutableStateOf(false) }
 
     LaunchedEffect(sessionId) {
-        val s = vm.getSession(sessionId) ?: return@LaunchedEffect
+        val s = vm.getSession(sessionId)
+        if (s == null) {
+            loadFailed = true
+            return@LaunchedEffect
+        }
         session = s
         patient = vm.getPatient(s.patientId)
         result = runCatching {
             Gson().fromJson(s.metricsJson, SkinAnalysisResult::class.java)
         }.getOrNull() ?: vm.lastResult
+        if (patient == null || result == null) {
+            loadFailed = true
+            return@LaunchedEffect
+        }
         images = runCatching {
             val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
             Gson().fromJson<Map<String, String>>(s.imagePathsJson, type) ?: emptyMap()
@@ -132,6 +141,23 @@ fun ReportScreen(
     val p = patient
     val r = result
     val s = session
+    if (loadFailed) {
+        Box(Modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    "Informe no encontrado",
+                    style = MaterialTheme.typography.headlineMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(
+                    onClick = onBack,
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    shape = RoundedCornerShape(4.dp),
+                ) { Text("Volver") }
+            }
+        }
+        return
+    }
     if (p == null || r == null || s == null) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Accent)
@@ -176,6 +202,8 @@ fun ReportScreen(
                                 pdf = pdf,
                                 toEmail = p.email.ifBlank { null },
                             )
+                        }.onFailure {
+                            vm.showUserMessage("No se pudo abrir Email: ${it.message ?: "error"}")
                         }
                     }
                 },
@@ -199,6 +227,8 @@ fun ReportScreen(
                                 pdf = pdf,
                                 phoneE164 = p.phone.ifBlank { null },
                             )
+                        }.onFailure {
+                            vm.showUserMessage("No se pudo abrir WhatsApp: ${it.message ?: "error"}")
                         }
                     }
                 },
@@ -217,7 +247,7 @@ fun ReportScreen(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("Resumen", "Superficial", "Profunda", "3/5 ojos", "Mapas", "Cuidado").forEachIndexed { i, label ->
+            listOf("Resumen", "Superficial", "Profunda", "Proporciones", "Mapas", "Cuidado").forEachIndexed { i, label ->
                 val selected = tab == i
                 Button(
                     onClick = { tab = i },

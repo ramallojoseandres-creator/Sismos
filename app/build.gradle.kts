@@ -12,8 +12,8 @@ android {
         applicationId = "com.mlh.skinanalyzer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 12
-        versionName = "1.1.1"
+        versionCode = 13
+        versionName = "1.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             abiFilters += listOf("arm64-v8a")

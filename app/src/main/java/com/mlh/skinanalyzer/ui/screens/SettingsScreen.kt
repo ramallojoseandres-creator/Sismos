@@ -63,6 +63,7 @@ fun SettingsScreen(
     hardwareDiagnostics: String = "",
     demoMode: Boolean = false,
     onDemoModeChange: (Boolean) -> Unit = {},
+    appVersion: String = "",
     onBack: () -> Unit,
     onSaveClinic: (ClinicProfile) -> Unit,
     onToggleIndicator: (String, Boolean) -> Unit,
@@ -218,6 +219,14 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.45f),
             )
+            if (appVersion.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "Versión $appVersion",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Ink.copy(alpha = 0.4f),
+                )
+            }
             Spacer(Modifier.height(24.dp))
         }
     }

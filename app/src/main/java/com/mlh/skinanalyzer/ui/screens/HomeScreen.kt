@@ -65,6 +65,9 @@ fun HomeScreen(
     clinicName: String,
     hardwareStatus: String,
     onRefreshHardware: () -> Unit,
+    demoMode: Boolean = false,
+    patientNameFor: (Long) -> String? = { null },
+    appVersion: String = "",
 ) {
     val pulse = rememberInfiniteTransition(label = "pulse")
     val glow by pulse.animateFloat(
@@ -110,7 +113,7 @@ fun HomeScreen(
             )
             Spacer(Modifier.height(16.dp))
             Text(
-                clinicName.ifBlank { "Dra María Laura Hernández" },
+                clinicName.ifBlank { "Dra. María Laura Hernández" },
                 style = MaterialTheme.typography.displayLarge,
                 color = Ink,
                 textAlign = TextAlign.Center,
@@ -136,6 +139,19 @@ fun HomeScreen(
                 color = Ink.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
             )
+            if (demoMode) {
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "MODO DEMO activo — sin cámara USB ni luces MJ-008. Desactívelo en Ajustes para la consulta real.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Accent,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Cream, RoundedCornerShape(4.dp))
+                        .padding(12.dp),
+                )
+            }
             Spacer(Modifier.height(28.dp))
             Button(
                 onClick = onNewAnalysis,
@@ -177,7 +193,11 @@ fun HomeScreen(
                             .clickable { onOpenSession(s.id) }
                             .padding(12.dp),
                     ) {
-                        Text(df.format(Date(s.createdAt)), style = MaterialTheme.typography.titleLarge)
+                        Text(
+                            patientNameFor(s.patientId) ?: "Paciente #${s.patientId}",
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                        Text(df.format(Date(s.createdAt)), style = MaterialTheme.typography.bodyMedium)
                         Text(
                             "${s.skinType} · edad cutánea ${s.skinAge}",
                             style = MaterialTheme.typography.bodyMedium,
@@ -201,6 +221,14 @@ fun HomeScreen(
                 IconButton(onClick = onRefreshHardware) {
                     Icon(Icons.Outlined.Refresh, contentDescription = "Reintentar MJ-008")
                 }
+            }
+            Spacer(Modifier.height(12.dp))
+            if (appVersion.isNotBlank()) {
+                Text(
+                    "v$appVersion · offline",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Ink.copy(alpha = 0.4f),
+                )
             }
             Spacer(Modifier.height(16.dp))
         }

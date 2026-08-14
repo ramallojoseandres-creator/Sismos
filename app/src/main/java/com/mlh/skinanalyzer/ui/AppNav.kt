@@ -84,6 +84,9 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 clinicName = vm.clinic.doctorName,
                 hardwareStatus = vm.hardwareStatus,
                 onRefreshHardware = { vm.refreshHardware() },
+                demoMode = vm.demoMode,
+                patientNameFor = { id -> vm.findPatientById(id)?.name },
+                appVersion = "${com.mlh.skinanalyzer.BuildConfig.VERSION_NAME} (${com.mlh.skinanalyzer.BuildConfig.VERSION_CODE})",
             )
         }
         composable(Routes.SETTINGS) {
@@ -94,6 +97,7 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 hardwareDiagnostics = vm.hardwareDiagnostics,
                 demoMode = vm.demoMode,
                 onDemoModeChange = { vm.enableDemoMode(it) },
+                appVersion = "${com.mlh.skinanalyzer.BuildConfig.VERSION_NAME} (${com.mlh.skinanalyzer.BuildConfig.VERSION_CODE})",
                 onBack = { nav.popBackStack() },
                 onSaveClinic = { vm.saveClinic(it) },
                 onToggleIndicator = { key, enabled -> vm.setIndicatorEnabled(key, enabled) },

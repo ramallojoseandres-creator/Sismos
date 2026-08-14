@@ -86,12 +86,15 @@ import com.mlh.skinanalyzer.ui.theme.Cream
 import com.mlh.skinanalyzer.ui.theme.Ink
 import com.mlh.skinanalyzer.ui.theme.Paper
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
@@ -192,7 +195,7 @@ fun CaptureScreen(
         }.getOrDefault("USB=?")
         Log.i("Capture", usbSummary)
 
-        runCatching {
+        try {
             uvcLabel = "$usbSummary — liberando USB…"
             val session = vm.prepareUvcSession(act)
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
@@ -207,7 +210,6 @@ fun CaptureScreen(
             uvcSession = session
             uvcLabel = session.statusLabel
             Log.i("Capture", "UVC bind+start done: ${session.statusLabel}")
-            // Poll while native open runs on USB I/O thread (can take several seconds).
             repeat(40) {
                 delay(500)
                 uvcLabel = session.statusLabel
@@ -216,11 +218,13 @@ fun CaptureScreen(
             if (!session.isReady) {
                 uvcLabel = "${session.statusLabel} — pulse Reintentar si no hay imagen"
             }
-        }.onFailure {
-            Log.e("Capture", "UVC prepare/bind/start failed", it)
-            val detail = it.message ?: it.javaClass.simpleName
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Log.e("Capture", "UVC prepare/bind/start failed", e)
+            val detail = e.message ?: e.javaClass.simpleName
             uvcLabel = if (detail.contains("0x7f0e0000") || detail.contains("Resource ID")) {
-                "Falta recurso cámara (click). Reinstalá v${BuildConfig.VERSION_NAME}+"
+                "Falta recurso cámara (click). Reinstale v${BuildConfig.VERSION_NAME}+"
             } else {
                 "Error UVC: $detail"
             }
@@ -246,8 +250,12 @@ fun CaptureScreen(
         }
     }
 
+    var captureJob by remember { mutableStateOf<Job?>(null) }
+
     DisposableEffect(Unit) {
         onDispose {
+            captureJob?.cancel()
+            captureJob = null
             vm.markCaptureActive(false)
             vm.releaseUvcSession()
             uvcSession = null
@@ -273,6 +281,7 @@ fun CaptureScreen(
     var capturing by remember { mutableStateOf(false) }
     var captureBanner by remember { mutableStateOf("") }
     var cameraXBound by remember { mutableStateOf(false) }
+    val busy = capturing || vm.analyzing
 
     val progress by animateFloatAsState(
         targetValue = captured.size / 8f,
@@ -286,7 +295,10 @@ fun CaptureScreen(
             .padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onBack) {
+            IconButton(
+                onClick = onBack,
+                enabled = !busy,
+            ) {
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
             }
             Column(Modifier.weight(1f)) {
@@ -358,7 +370,15 @@ fun CaptureScreen(
                                 )
                                 Spacer(Modifier.height(12.dp))
                                 Button(
-                                    onClick = { uvcStartToken++ },
+                                    onClick = {
+                                        val existing = uvcSession
+                                        if (existing != null) {
+                                            existing.retryConnect()
+                                            uvcLabel = existing.statusLabel
+                                        } else {
+                                            uvcStartToken++
+                                        }
+                                    },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara frontal USB3.0") }
                                 Spacer(Modifier.height(8.dp))
@@ -458,7 +478,7 @@ fun CaptureScreen(
                 )
             }
 
-            if (capturing && captureBanner.isNotBlank()) {
+            if (busy && captureBanner.isNotBlank()) {
                 Box(
                     Modifier
                         .fillMaxSize()
@@ -527,19 +547,26 @@ fun CaptureScreen(
                 singleLine = true,
                 shape = RoundedCornerShape(4.dp),
             )
-            if (capturing) {
+            if (busy) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(28.dp), color = Accent)
                     Spacer(Modifier.width(10.dp))
-                    Text(captureBanner.ifBlank { "Capturando, por favor espere…" })
+                    Text(
+                        when {
+                            vm.analyzing -> "Analizando, por favor espere…"
+                            else -> captureBanner.ifBlank { "Capturando, por favor espere…" }
+                        },
+                    )
                 }
             } else {
                 Button(
                     onClick = {
-                        scope.launch {
+                        captureJob?.cancel()
+                        captureJob = scope.launch {
                             capturing = true
                             captureBanner = "Capturando, por favor espere…"
                             try {
+                                captured.clear()
                                 val sessionDir = File(
                                     context.filesDir,
                                     "sessions/capture_${System.currentTimeMillis()}",
@@ -555,6 +582,7 @@ fun CaptureScreen(
                                 val total = LightMode.captureOrder.size
                                 val preferLiveCam = demoMode && hasCamPermission && cameraXBound
                                 for ((index, mode) in LightMode.captureOrder.withIndex()) {
+                                    if (!isActive) return@launch
                                     currentIndex = index
                                     val n = index + 1
                                     captureBanner = if (n < total) {
@@ -607,9 +635,10 @@ fun CaptureScreen(
                                         captured[mode.shortName] = oemFile.absolutePath to bmp
                                         previewBitmap = bmp
                                     } else {
-                                        status = "No se pudo capturar ${mode.shortName}"
+                                        status = "No se pudo capturar ${mode.displayName}"
                                     }
                                 }
+                                if (!isActive) return@launch
                                 withContext(Dispatchers.IO) {
                                     when {
                                         demoMode -> Unit
@@ -617,32 +646,50 @@ fun CaptureScreen(
                                         else -> runCatching { controller.turnOff() }
                                     }
                                 }
-                                if (captured.isEmpty()) {
-                                    captureBanner = ""
-                                    status = "Sin imágenes. Revisar cámara y permisos."
-                                } else {
-                                    captureBanner = "Escaneo finalizado"
-                                    status = if (demoMode) "Demo: 8 espectros listos" else "8 espectros listos"
-                                    delay(1200)
-                                    captureBanner = "Analizando, por favor espere…"
-                                    status = "Generando mapas e informe…"
-                                    onFinished(
-                                        captured.mapValues { it.value.first },
-                                        moistureText.toFloatOrNull(),
-                                        sessionDir.absolutePath,
-                                    )
+                                when {
+                                    captured.isEmpty() -> {
+                                        captureBanner = ""
+                                        status = "Sin imágenes. Revise cámara y permisos."
+                                    }
+                                    captured.size < total -> {
+                                        captureBanner = ""
+                                        val missing = LightMode.captureOrder
+                                            .filter { it.shortName !in captured }
+                                            .joinToString { it.displayName }
+                                        status = "Faltan ${total - captured.size} luces: $missing. Reintente."
+                                    }
+                                    else -> {
+                                        captureBanner = "Escaneo finalizado"
+                                        status = if (demoMode) "Demo: 8 espectros listos" else "8 espectros listos"
+                                        delay(900)
+                                        captureBanner = "Analizando, por favor espere…"
+                                        status = "Generando mapas e informe…"
+                                        onFinished(
+                                            captured.mapValues { it.value.first },
+                                            moistureText.toFloatOrNull(),
+                                            sessionDir.absolutePath,
+                                        )
+                                        // Stay busy until ViewModel finishes navigating away.
+                                        while (isActive && vm.analyzing) delay(200)
+                                    }
                                 }
+                            } catch (e: CancellationException) {
+                                throw e
                             } catch (e: Exception) {
                                 captureBanner = ""
                                 status = "Error: ${e.message}"
                                 Log.e("Capture", "sequence failed", e)
                             } finally {
                                 capturing = false
-                                captureBanner = ""
+                                if (!vm.analyzing) captureBanner = ""
                             }
                         }
                     },
-                    enabled = patient != null && (demoMode || useUvc || hasCamPermission),
+                    enabled = patient != null && (
+                        demoMode ||
+                            (useUvc && uvcReady) ||
+                            (!useUvc && hasCamPermission)
+                        ),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
@@ -651,7 +698,13 @@ fun CaptureScreen(
                 ) {
                     Icon(Icons.Outlined.CameraAlt, null)
                     Spacer(Modifier.width(8.dp))
-                    Text(if (demoMode) "Iniciar análisis (Demo)" else "Iniciar análisis")
+                    Text(
+                        when {
+                            demoMode -> "Iniciar análisis (Demo)"
+                            !uvcReady && useUvc -> "Espere cámara…"
+                            else -> "Iniciar análisis"
+                        },
+                    )
                 }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -687,7 +740,7 @@ fun CaptureScreen(
                                 Text(mode.shortName.take(3), style = MaterialTheme.typography.labelLarge)
                             }
                         }
-                        Text(mode.shortName, style = MaterialTheme.typography.labelLarge)
+                        Text(mode.displayName.take(8), style = MaterialTheme.typography.labelLarge)
                     }
                 }
             }

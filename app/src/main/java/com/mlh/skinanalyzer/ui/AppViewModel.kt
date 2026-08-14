@@ -95,6 +95,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         userMessage = null
     }
 
+    fun showUserMessage(msg: String) {
+        userMessage = msg
+    }
+
     fun findPatientById(id: Long): Patient? = allPatients.find { it.id == id }
 
     /** Resolve patient then invoke [onNavigate] on the main thread. */
@@ -368,7 +372,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             analyzing = true
             val oemEngine = OemSkinEngine(getApplication())
             try {
-                val patient = withContext(Dispatchers.IO) { patientsDao.getById(patientId) } ?: return@launch
+                val patient = withContext(Dispatchers.IO) { patientsDao.getById(patientId) }
+                if (patient == null) {
+                    userMessage = "No se encontró el paciente para analizar."
+                    return@launch
+                }
                 var oemBundle: OemAnalysisBundle? = null
                 var result: SkinAnalysisResult
                 val pathsOut: Map<String, String>
@@ -400,7 +408,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         map to imagePaths.toMutableMap().also { m ->
                             derived.forEach { (k, bmp) ->
                                 if (!m.containsKey(k)) {
-                                    val                                     out = File(
+                                    val out = File(
                                         getApplication<Application>().filesDir,
                                         "sessions/derived_${k}_${System.currentTimeMillis()}.jpg",
                                     ).also { it.parentFile?.mkdirs() }
@@ -444,6 +452,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 val sid = withContext(Dispatchers.IO) { sessionsDao.insert(session) }
                 onDone(sid)
+            } catch (e: Exception) {
+                Log.e("MLH", "runAnalysis failed", e)
+                userMessage = "Error al analizar: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 oemEngine.close()
                 analyzing = false
@@ -536,6 +547,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     override fun onCleared() {
+        releaseUvcSession()
         lightController.close()
         super.onCleared()
     }
