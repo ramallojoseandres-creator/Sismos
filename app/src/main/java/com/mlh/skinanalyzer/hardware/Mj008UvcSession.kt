@@ -94,6 +94,8 @@ class Mj008UvcSession(
     fun bindPreview(view: UVCCameraTextureView) {
         previewView = view
         if (cameraHandler == null) {
+            // createHandler loads R.raw.camera_click (0x7f0e0000) via SoundPool —
+            // that raw file + public.xml ID pin must exist or this throws Resources.NotFoundException.
             cameraHandler = UVCCameraHandler.createHandler(
                 activity,
                 view,
@@ -115,6 +117,7 @@ class Mj008UvcSession(
         lastStatus = "UVC: buscando cámara frontal USB3.0…"
         if (usbMonitor == null) {
             usbMonitor = USBMonitor(activity, deviceListener)
+            patchUsbPermissionIntent(usbMonitor!!)
         }
         previewView?.onResume()
         usbMonitor?.register()
@@ -122,6 +125,35 @@ class Mj008UvcSession(
         mainHandler.postDelayed({ probeAttachedDevices() }, 1000)
         mainHandler.postDelayed({ probeAttachedDevices() }, 2500)
         mainHandler.postDelayed({ probeAttachedDevices() }, 5000)
+    }
+
+    /**
+     * OEM USBMonitor.register() builds PendingIntent with flags=0 — illegal on API 31+.
+     * Pre-install a mutable PendingIntent so register() skips creation.
+     */
+    private fun patchUsbPermissionIntent(monitor: USBMonitor) {
+        try {
+            val actionField = USBMonitor::class.java.getDeclaredField("ACTION_USB_PERMISSION")
+            actionField.isAccessible = true
+            val action = actionField.get(monitor) as String
+            val flags = if (android.os.Build.VERSION.SDK_INT >= 31) {
+                android.app.PendingIntent.FLAG_MUTABLE
+            } else {
+                0
+            }
+            val pi = android.app.PendingIntent.getBroadcast(
+                activity,
+                0,
+                android.content.Intent(action),
+                flags,
+            )
+            val piField = USBMonitor::class.java.getDeclaredField("mPermissionIntent")
+            piField.isAccessible = true
+            piField.set(monitor, pi)
+            Log.i(TAG, "USBMonitor PendingIntent patched for API ${android.os.Build.VERSION.SDK_INT}")
+        } catch (e: Exception) {
+            Log.w(TAG, "Could not patch USBMonitor PendingIntent", e)
+        }
     }
 
     fun retryConnect() {

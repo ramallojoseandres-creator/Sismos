@@ -202,7 +202,12 @@ fun CaptureScreen(
             }
         }.onFailure {
             Log.e("Capture", "UVC prepare/bind/start failed", it)
-            uvcLabel = "Error UVC: ${it.message}"
+            val detail = it.message ?: it.javaClass.simpleName
+            uvcLabel = if (detail.contains("0x7f0e0000") || detail.contains("Resource ID")) {
+                "Falta recurso cámara (click). Reinstalá v${BuildConfig.VERSION_NAME}+"
+            } else {
+                "Error UVC: $detail"
+            }
         }
     }
 

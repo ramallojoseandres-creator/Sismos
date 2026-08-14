@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pin IDs expected by serenegiant-uvc.jar (baked R constants from OEM APK). -->
+<resources>
+    <public type="raw" name="camera_click" id="0x7f0e0000" />
+    <public type="xml" name="device_filter" id="0x7f120000" />
+</resources>
