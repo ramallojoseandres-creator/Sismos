@@ -21,25 +21,27 @@ import java.nio.charset.Charset
 class SerialLightController(
     private val devicePath: String = Mj008Hardware.SERIAL_DEVICE,
     private var baudRate: Int = Mj008Hardware.SERIAL_BAUD_PRIMARY,
-) {
+) : LightController {
     private var outputStream: OutputStream? = null
     private var inputStream: InputStream? = null
     private var fdHolder: Any? = null
-    var isOpen: Boolean = false
+    override var isOpen: Boolean = false
         private set
-    var lastError: String? = null
+    override var lastError: String? = null
         private set
+    override val backendLabel: String
+        get() = if (usingLegacyBinary) "UART-legacy-9600" else "UART-ttyS4"
     var activePreset: Mj008Hardware.LightPreset =
         Mj008Hardware.presetFor(Mj008Hardware.CameraVariant.MOJI_25443)
         private set
     var usingLegacyBinary: Boolean = false
         private set
 
-    fun setCameraVariant(variant: Mj008Hardware.CameraVariant) {
+    override fun setCameraVariant(variant: Mj008Hardware.CameraVariant) {
         activePreset = Mj008Hardware.presetFor(variant)
     }
 
-    fun open(): Boolean {
+    override fun open(): Boolean {
         close()
         return try {
             val file = File(devicePath)
@@ -117,7 +119,7 @@ class SerialLightController(
         }
     }
 
-    fun close() {
+    override fun close() {
         try {
             turnOff()
         } catch (_: Exception) {
@@ -151,7 +153,7 @@ class SerialLightController(
         if (!usingLegacyBinary) sendRawText(CMD_HEART)
     }
 
-    fun turnOff() {
+    override fun turnOff() {
         try {
             if (usingLegacyBinary) {
                 sendLegacyBinary(0x10, 0x00)
@@ -163,7 +165,7 @@ class SerialLightController(
         }
     }
 
-    fun setMultiMode() {
+    override fun setMultiMode() {
         if (!usingLegacyBinary) sendRawText(CMD_MULTI_MODE)
     }
 
@@ -186,7 +188,7 @@ class SerialLightController(
         sendRawText("$prefix$p%")
     }
 
-    fun applyLightMode(mode: LightMode) {
+    override fun applyLightMode(mode: LightMode) {
         if (mode.hardwareChannel == null) return
         try {
             val p = activePreset

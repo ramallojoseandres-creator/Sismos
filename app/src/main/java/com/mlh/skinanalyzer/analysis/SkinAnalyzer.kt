@@ -180,8 +180,9 @@ object SkinAnalyzer {
     ): Map<String, Bitmap> {
         val out = LinkedHashMap<String, Bitmap>()
         uv?.let { out["Blue"] = mapChannel(it, mode = SpectralMap.BLUE) }
-        woods?.let { out["Brown"] = mapChannel(it, mode = SpectralMap.BROWN) }
-            ?: white?.let { out["Brown"] = mapChannel(it, mode = SpectralMap.BROWN) }
+        woods?.let { out["Orange"] = mapChannel(it, mode = SpectralMap.BROWN) }
+            ?: white?.let { out["Orange"] = mapChannel(it, mode = SpectralMap.BROWN) }
+        out["Orange"]?.let { out["Brown"] = it }
         white?.let { out["Red"] = mapChannel(it, mode = SpectralMap.RED) }
             ?: uv?.let { out["Red"] = mapChannel(it, mode = SpectralMap.RED) }
         return out

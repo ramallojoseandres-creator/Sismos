@@ -21,7 +21,7 @@ import com.mlh.skinanalyzer.data.AnalysisSession
 import com.mlh.skinanalyzer.data.AppDatabase
 import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
-import com.mlh.skinanalyzer.hardware.SerialLightController
+import com.mlh.skinanalyzer.hardware.Mj008LightController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -45,7 +45,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var lastResult by mutableStateOf<SkinAnalysisResult?>(null)
         private set
 
-    val lightController = SerialLightController()
+    val lightController = Mj008LightController(app)
 
     init {
         viewModelScope.launch {
@@ -64,7 +64,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 lightController.setCameraVariant(detection.cameraVariant)
                 val ok = lightController.open()
                 hardwareStatus = if (ok) {
-                    "MJ-008 listo · LED ${if (lightController.usingLegacyBinary) "legacy 9600" else "115200"} · cámara ${detection.cameraVariant.name}"
+                    "MJ-008 listo · LED ${lightController.backendLabel} · cámara ${detection.cameraVariant.name}"
                 } else {
                     detection.summary + " · " +
                         (lightController.lastError ?: "LED no conectado; captura disponible")
@@ -107,21 +107,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     imagePaths.forEach { (key, path) ->
                         decodeBitmap(path)?.let { map[key] = it }
                     }
-                    // Derive Blue/Brown/Red if missing
+                    // Derive Blue/Orange/Red only if the tablet could not capture them (UART fallback).
                     val derived = SkinAnalyzer.deriveSpectralMaps(
                         white = map["White"],
                         uv = map["UV"],
                         woods = map["Wood's"],
                     )
+                    // Prefer real Orange capture; keep Brown alias for older reports.
+                    map["Orange"]?.let { map.putIfAbsent("Brown", it) }
+                    map["Brown"]?.let { map.putIfAbsent("Orange", it) }
                     derived.forEach { (k, bmp) ->
                         if (!map.containsKey(k)) {
-                            val out = File(getApplication<Application>().cacheDir, "derived_${k}_${System.currentTimeMillis()}.jpg")
-                            out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
                             map[k] = bmp
-                            (imagePaths as? MutableMap)?.put(k, out.absolutePath)
                         }
                     }
                     map to imagePaths.toMutableMap().also { m ->
+                        map["Orange"]?.let { /* already in paths if captured */ }
                         derived.forEach { (k, bmp) ->
                             if (!m.containsKey(k)) {
                                 val out = File(getApplication<Application>().cacheDir, "derived_${k}_${System.currentTimeMillis()}.jpg")
@@ -129,6 +130,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                 m[k] = out.absolutePath
                             }
                         }
+                        m["Orange"]?.let { m.putIfAbsent("Brown", it) }
+                        m["Brown"]?.let { m.putIfAbsent("Orange", it) }
                     }
                 }
                 val result = withContext(Dispatchers.Default) {

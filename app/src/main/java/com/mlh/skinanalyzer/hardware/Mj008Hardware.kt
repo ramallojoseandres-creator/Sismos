@@ -9,19 +9,24 @@ import java.io.File
 /**
  * Hardware profile locked to **Maokin Miaojin MJ-008**.
  *
- * The Bitmoji/Moji A6 reference APK shares the same LED UART and USB camera
- * family used on MJ-008 tablets. This profile pins product IDs, serial path,
- * baud rate and LED intensity presets to that machine — not generic Android tablets.
+ * Real OEM (Miaojing / 妙境 `com.ym.smart.skins`) drives LEDs over USB XU on the
+ * UVC camera (`nativeXuWrite(130, 55318, …)`), not UART. Serial `/dev/ttyS4` is
+ * kept only as a lab fallback for older Moji boards.
  */
 object Mj008Hardware {
     const val MODEL_NAME = "MJ-008"
     const val BRAND_NAME = "Maokin Miaojin"
     const val FULL_LABEL = "MJ-008 Maokin Miaojin Skin Analyzer"
 
-    /** UART used by MJ-008 light board (same as Moji A6 tablet integration). */
+    /** Optional UART fallback (Bitmoji/Moji A6 family). */
     const val SERIAL_DEVICE = "/dev/ttyS4"
     const val SERIAL_BAUD_PRIMARY = 115200
     const val SERIAL_BAUD_LEGACY = 9600
+
+    /** Preview size used by OEM UVC handler. */
+    const val PREVIEW_WIDTH = 1600
+    const val PREVIEW_HEIGHT = 1200
+    const val PREVIEW_ORIENTATION = 90
 
     /**
      * USB camera product IDs seen on Moji / MJ-family analyzers.
@@ -34,12 +39,14 @@ object Mj008Hardware {
         ZX_FCA56,
         MOJI_25443,
         MOJI_25456,
+        MJ008_UVC,
         UNKNOWN,
     }
 
     data class Detection(
         val serialPresent: Boolean,
         val serialWritable: Boolean,
+        val usbXuCameraPresent: Boolean,
         val cameraVariant: CameraVariant,
         val usbCameras: List<String>,
         val deviceModel: String,
@@ -56,7 +63,7 @@ object Mj008Hardware {
         val uvCenter: Int,
     )
 
-    /** LED center-channel intensities matching OEM capture groups for MJ-008 / Moji. */
+    /** LED center-channel intensities for UART fallback only. */
     fun presetFor(variant: CameraVariant): LightPreset = when (variant) {
         CameraVariant.MOJI_25443, CameraVariant.MOJI_25456 -> LightPreset(
             whiteCenter = 49,
@@ -101,22 +108,29 @@ object Mj008Hardware {
             false
         }
         val usb = listUsbCameras(context)
-        val variant = resolveVariant(usb.map { it.second })
+        val xuPresent = usb.any { UsbXuLightController.isMj008Camera(it.first) } ||
+            usb.any { UsbXuLightController.hasVideoInterface(it.first) }
+        val variant = when {
+            usb.any { UsbXuLightController.isMj008Camera(it.first) } -> CameraVariant.MJ008_UVC
+            else -> resolveVariant(usb.map { it.second })
+        }
         val model = Build.MODEL.orEmpty()
         val summary = buildString {
             append(FULL_LABEL)
-            append(" · serial ")
+            append(" · LED ")
             append(
                 when {
-                    serialWritable -> "OK ($SERIAL_DEVICE)"
-                    serialPresent -> "presente ($SERIAL_DEVICE)"
-                    else -> "no encontrado"
+                    xuPresent -> "USB-XU"
+                    serialWritable -> "UART ($SERIAL_DEVICE)"
+                    serialPresent -> "UART presente"
+                    else -> "no detectado"
                 },
             )
             append(" · cámara ")
             append(
                 when (variant) {
                     CameraVariant.UNKNOWN -> if (usb.isEmpty()) "no detectada (USB)" else "USB genérica"
+                    CameraVariant.MJ008_UVC -> "USB3.0 UVC"
                     else -> variant.name
                 },
             )
@@ -124,8 +138,12 @@ object Mj008Hardware {
         return Detection(
             serialPresent = serialPresent,
             serialWritable = serialWritable,
+            usbXuCameraPresent = xuPresent,
             cameraVariant = variant,
-            usbCameras = usb.map { (dev, pid) -> "${dev.deviceName} PID=$pid" },
+            usbCameras = usb.map { (dev, pid) ->
+                val name = runCatching { dev.productName }.getOrNull() ?: dev.deviceName
+                "$name PID=$pid"
+            },
             deviceModel = model,
             summary = summary,
         )
@@ -140,8 +158,7 @@ object Mj008Hardware {
                 52243 -> return CameraVariant.SXW
             }
         }
-        // MJ-008 default: Moji LED curve (most common on Miaojin tablets)
-        return CameraVariant.MOJI_25443
+        return CameraVariant.UNKNOWN
     }
 
     private fun listUsbCameras(context: Context): List<Pair<UsbDevice, Int>> {

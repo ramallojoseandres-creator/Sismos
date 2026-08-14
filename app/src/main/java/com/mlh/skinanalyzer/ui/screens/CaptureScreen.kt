@@ -64,9 +64,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.hardware.LightController
 import com.mlh.skinanalyzer.hardware.LightMode
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
-import com.mlh.skinanalyzer.hardware.SerialLightController
 import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
 import com.mlh.skinanalyzer.ui.theme.Ink
@@ -84,7 +84,7 @@ import kotlin.coroutines.suspendCoroutine
 @Composable
 fun CaptureScreen(
     patient: Patient?,
-    controller: SerialLightController,
+    controller: LightController,
     onBack: () -> Unit,
     onFinished: (Map<String, String>, Float?) -> Unit,
 ) {
@@ -263,7 +263,7 @@ fun CaptureScreen(
             )
             Text(
                 if (controller.isOpen) {
-                    "MJ-008 LED: activo (${detection?.cameraVariant?.name ?: "—"})"
+                    "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
                 } else {
                     "MJ-008 LED: no disponible — captura igual"
                 },
@@ -294,21 +294,17 @@ fun CaptureScreen(
                                 for ((index, mode) in LightMode.captureOrder.withIndex()) {
                                     currentIndex = index
                                     status = "Luz ${index + 1}/8: ${mode.displayName}"
-                                    if (mode.hardwareChannel != null) {
-                                        withContext(Dispatchers.IO) {
-                                            controller.applyLightMode(mode)
-                                        }
-                                        delay(350)
-                                        val file = File(dir, "${mode.shortName}_${System.currentTimeMillis()}.jpg")
-                                        val bmp = takePicture(imageCapture, cameraExecutor, file)
-                                        if (bmp != null || file.exists()) {
-                                            captured[mode.shortName] = file.absolutePath to bmp
-                                            previewBitmap = bmp
-                                        } else {
-                                            status = "No se pudo capturar ${mode.shortName}"
-                                        }
+                                    withContext(Dispatchers.IO) {
+                                        controller.applyLightMode(mode)
+                                    }
+                                    delay(350)
+                                    val file = File(dir, "${mode.shortName}_${System.currentTimeMillis()}.jpg")
+                                    val bmp = takePicture(imageCapture, cameraExecutor, file)
+                                    if (bmp != null || file.exists()) {
+                                        captured[mode.shortName] = file.absolutePath to bmp
+                                        previewBitmap = bmp
                                     } else {
-                                        delay(80)
+                                        status = "No se pudo capturar ${mode.shortName}"
                                     }
                                 }
                                 withContext(Dispatchers.IO) { runCatching { controller.turnOff() } }

@@ -22,11 +22,12 @@ class SkinAnalyzerTest {
     }
 
     @Test
-    fun deriveSpectralMapsCreatesBlueBrownRed() {
+    fun deriveSpectralMapsCreatesBlueOrangeRed() {
         val bmp = Bitmap.createBitmap(32, 32, Bitmap.Config.ARGB_8888)
         bmp.eraseColor(Color.rgb(120, 80, 60))
         val maps = SkinAnalyzer.deriveSpectralMaps(bmp, bmp, bmp)
         assertTrue(maps.containsKey("Blue"))
+        assertTrue(maps.containsKey("Orange"))
         assertTrue(maps.containsKey("Brown"))
         assertTrue(maps.containsKey("Red"))
     }
