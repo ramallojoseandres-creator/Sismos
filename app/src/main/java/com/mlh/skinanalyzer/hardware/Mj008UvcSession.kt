@@ -46,10 +46,8 @@ class Mj008UvcSession(
     private val deviceListener = object : USBMonitor.OnDeviceConnectListener {
         override fun onAttach(device: UsbDevice?) {
             if (device == null) return
-            if (!UsbXuLightController.isMj008Camera(device) &&
-                !UsbXuLightController.hasVideoInterface(device)
-            ) {
-                Log.d(TAG, "Ignorando USB no-vídeo: ${UsbXuLightController.describe(device)}")
+            if (!Mj008UsbDevices.isLikelyAnalyzerCamera(device)) {
+                Log.d(TAG, "Ignorando USB secundario: ${UsbXuLightController.describe(device)}")
                 return
             }
             lastStatus = "UVC: solicitando permiso ${UsbXuLightController.describe(device)}"
@@ -150,24 +148,23 @@ class Mj008UvcSession(
         try {
             val list = monitor.deviceList
             lastStatus = "UVC: USB detectados=${list.size}"
-            Log.i(TAG, "$lastStatus → ${list.map { UsbXuLightController.describe(it) }}")
+            val ranked = list.map { Mj008UsbDevices.rankAnalyzerCamera(it) }
+                .sortedByDescending { it.score }
+            Log.i(
+                TAG,
+                "$lastStatus → ${ranked.joinToString { "${UsbXuLightController.describe(it.device)} score=${it.score}" }}",
+            )
             if (list.isEmpty()) {
-                lastStatus = "UVC: sin dispositivos USB (¿cámara interna apagada?)"
+                lastStatus = "UVC: sin USB (Auxiliary: Dual USB camera ON — revise cable interno)"
                 return
             }
-            for (device in list) {
-                if (UsbXuLightController.isMj008Camera(device) ||
-                    UsbXuLightController.hasVideoInterface(device)
-                ) {
-                    lastStatus = "UVC: pidiendo permiso ${UsbXuLightController.describe(device)}"
-                    monitor.requestPermission(device)
-                    return
-                }
+            val pick = Mj008UsbDevices.pickAnalyzerCamera(list)
+            if (pick != null) {
+                lastStatus = "UVC: eligiendo ${UsbXuLightController.describe(pick.device)} (${pick.reason})"
+                monitor.requestPermission(pick.device)
+                return
             }
-            // Last resort: first USB device (some MJ firmwares omit video class flags).
-            val first = list.first()
-            lastStatus = "UVC: intentando primer USB ${UsbXuLightController.describe(first)}"
-            monitor.requestPermission(first)
+            lastStatus = "UVC: ninguna cámara analizador reconocida entre ${list.size} USB"
         } catch (e: Exception) {
             Log.e(TAG, "probeAttachedDevices", e)
             lastStatus = "UVC probe: ${e.message}"

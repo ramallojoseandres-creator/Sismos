@@ -194,10 +194,8 @@ class UsbXuLightController(
 
     private fun findMj008Camera(): UsbDevice? {
         val devices = usbManager.deviceList.values.toList()
-        val preferred = devices.firstOrNull { isMj008Camera(it) }
-        if (preferred != null) return preferred
-        // Fallback: first video-class device
-        return devices.firstOrNull { hasVideoInterface(it) }
+        return Mj008UsbDevices.pickAnalyzerCameraOrNull(devices)
+            ?: devices.firstOrNull { UsbXuLightController.hasVideoInterface(it) }
     }
 
     private fun pickControlInterface(device: UsbDevice): UsbInterface? {

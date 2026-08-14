@@ -175,8 +175,8 @@ fun SettingsScreen(
                     color = Ink.copy(alpha = 0.7f),
                 )
                 Text(
-                    "Si USB total = 0: la cámara UVC no está enumerada. Acepte el diálogo de permiso USB al capturar. " +
-                        "El menú de ingeniería muestra /dev/ttyS1 @ 9600 — la app ya lo prioriza para LEDs.",
+                    "Si hay 2 USB (Dual USB camera ON): la app elige la del analizador (USB3.0 / USB Camera). " +
+                        "Acepte el permiso USB al capturar. Menú eng: Screen Rotation 270, Camera Rotation 0.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink.copy(alpha = 0.5f),
                 )

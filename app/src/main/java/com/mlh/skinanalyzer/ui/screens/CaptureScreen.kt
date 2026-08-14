@@ -251,10 +251,10 @@ fun CaptureScreen(
                                     val preview = Preview.Builder().build()
                                     preview.setSurfaceProvider(previewView.surfaceProvider)
                                     provider.unbindAll()
-                                    val selectors = listOf(
-                                        CameraSelector.DEFAULT_BACK_CAMERA,
-                                        CameraSelector.DEFAULT_FRONT_CAMERA,
-                                    )
+                                val selectors = listOf(
+                                    CameraSelector.DEFAULT_FRONT_CAMERA,
+                                    CameraSelector.DEFAULT_BACK_CAMERA,
+                                )
                                     var bound = false
                                     for (selector in selectors) {
                                         try {

@@ -140,18 +140,23 @@ object Mj008Hardware {
             append(camLabel)
         }
         val diagnostics = buildString {
+            appendLine("Firmware MJ-008 (menú Auxiliary Function):")
+            appendLine("  Screen Rotation=270 · Camera Rotation=0")
+            appendLine("  Force USB front camera=ON · Dual USB camera=ON")
+            appendLine("  → la app elige la cámara analizador por nombre/PID (no la USB secundaria)")
             appendLine("Modelo Android: $model")
             appendLine("USB total: ${usb.size}")
             if (usb.isEmpty()) {
-                appendLine("  (vacío — la cámara UVC suele aparecer aquí; revise cable interno / permiso USB)")
+                appendLine("  (vacío — revise cable interno / permiso USB al capturar)")
             } else {
-                usb.forEach { (dev, pid) ->
-                    val video = UsbXuLightController.hasVideoInterface(dev)
-                    val named = UsbXuLightController.isMj008Camera(dev)
-                    appendLine(
-                        "  ${describeUsb(dev)} pid=$pid video=$video named=$named",
-                    )
-                }
+                usb.map { Mj008UsbDevices.rankAnalyzerCamera(it.first) }
+                    .sortedByDescending { it.score }
+                    .forEach { r ->
+                        val dev = r.device
+                        appendLine(
+                            "  [score=${r.score}] ${describeUsb(dev)} · ${r.reason}",
+                        )
+                    }
             }
             appendLine("Puertos serie:")
             SERIAL_CANDIDATES.map { it.path }.distinct().forEach { path ->
