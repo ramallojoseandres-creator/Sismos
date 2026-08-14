@@ -73,6 +73,7 @@ import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
 import com.mlh.skinanalyzer.hardware.LightMode
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
+import com.mlh.skinanalyzer.ui.AppViewModel
 import com.serenegiant.widget.UVCCameraTextureView
 import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
@@ -90,7 +91,8 @@ import kotlin.coroutines.suspendCoroutine
 
 @Composable
 fun CaptureScreen(
-    patient: Patient?,
+    patientId: Long,
+    vm: AppViewModel,
     controller: Mj008LightController,
     onBack: () -> Unit,
     onFinished: (Map<String, String>, Float?, String) -> Unit,
@@ -100,44 +102,39 @@ fun CaptureScreen(
     val scope = rememberCoroutineScope()
     val detection = remember { runCatching { Mj008Hardware.detect(context) }.getOrNull() }
 
+    var patient by remember(patientId) {
+        mutableStateOf(
+            vm.capturePatient?.takeIf { it.id == patientId }
+                ?: vm.findPatientById(patientId),
+        )
+    }
+    LaunchedEffect(patientId) {
+        if (patient == null) {
+            patient = vm.getPatient(patientId)
+        }
+    }
+
     var hasCamPermission by remember {
         mutableStateOf(
             ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA) ==
                 PackageManager.PERMISSION_GRANTED,
         )
     }
+    val activity = context as? Activity
+    var useUvc by remember { mutableStateOf(activity != null) }
+    var uvcSession by remember { mutableStateOf<Mj008UvcSession?>(null) }
+    var uvcBound by remember { mutableStateOf(false) }
+
+    var uvcLabel by remember { mutableStateOf("") }
+    var uvcReady by remember { mutableStateOf(false) }
+
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { hasCamPermission = it }
-
-    val activity = context as? Activity
-    // Prefer UVC, but if it fails to start we fall back to CameraX so Captura always opens.
-    var useUvc by remember { mutableStateOf(activity != null) }
-    val uvcSession = remember(activity) {
-        activity?.let { Mj008UvcSession(it) }
-    }
-
-    var uvcLabel by remember { mutableStateOf(uvcSession?.statusLabel ?: "") }
-    var uvcReady by remember { mutableStateOf(false) }
-    LaunchedEffect(useUvc) {
-        if (!useUvc) return@LaunchedEffect
-        while (true) {
-            uvcLabel = uvcSession?.statusLabel.orEmpty()
-            uvcReady = uvcSession?.isReady == true
-            delay(500)
-        }
-    }
-
-    LaunchedEffect(Unit) {
-        if (!hasCamPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
-        withContext(Dispatchers.IO) {
-            runCatching {
-                if (useUvc) {
-                    detection?.let { controller.setCameraVariant(it.cameraVariant) }
-                    // Critical: free USB so UVC can open the same USB3.0 device.
-                    controller.releaseUsbForUvc()
-                    controller.openSerialOnly()
-                } else {
+    ) { granted ->
+        hasCamPermission = granted
+        if (granted && !useUvc) {
+            scope.launch(Dispatchers.IO) {
+                runCatching {
                     detection?.let { controller.setCameraVariant(it.cameraVariant) }
                     controller.open()
                     controller.setMultiMode()
@@ -146,12 +143,63 @@ fun CaptureScreen(
             }
         }
     }
-    DisposableEffect(useUvc) {
+
+    LaunchedEffect(Unit) {
+        if (!hasCamPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        } else if (!useUvc) {
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    detection?.let { controller.setCameraVariant(it.cameraVariant) }
+                    controller.open()
+                    controller.setMultiMode()
+                    controller.applyLightMode(LightMode.WHITE)
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        vm.markCaptureActive(true)
+    }
+
+    LaunchedEffect(useUvc, hasCamPermission, activity) {
+        if (!useUvc || activity == null || !hasCamPermission) {
+            uvcSession = null
+            uvcBound = false
+            return@LaunchedEffect
+        }
+        uvcBound = false
+        uvcReady = false
+        uvcLabel = "Preparando cámara USB3.0 del analizador…"
+        runCatching {
+            val session = vm.prepareUvcSession(activity)
+            detection?.let { controller.setCameraVariant(it.cameraVariant) }
+            uvcSession = session
+            uvcLabel = session.statusLabel
+        }.onFailure {
+            Log.e("Capture", "prepareUvcSession failed", it)
+            uvcLabel = "Error cámara: ${it.message}"
+        }
+    }
+
+    LaunchedEffect(useUvc, uvcSession) {
+        if (!useUvc) return@LaunchedEffect
+        while (true) {
+            uvcLabel = uvcSession?.statusLabel.orEmpty()
+            uvcReady = uvcSession?.isReady == true
+            delay(500)
+        }
+    }
+
+    DisposableEffect(Unit) {
         onDispose {
+            vm.markCaptureActive(false)
+            vm.releaseUvcSession()
+            uvcSession = null
+            uvcBound = false
             scope.launch(Dispatchers.IO) {
-                if (useUvc) {
-                    runCatching { uvcSession?.release() }
-                } else {
+                if (!useUvc) {
                     runCatching { controller.turnOff() }
                 }
             }
@@ -227,17 +275,19 @@ fun CaptureScreen(
                 .background(Ink),
         ) {
             if (hasCamPermission) {
-                if (useUvc && uvcSession != null) {
+                if (useUvc && activity != null) {
                     AndroidView(
-                        factory = { ctx ->
-                            UVCCameraTextureView(ctx).also { view ->
-                                try {
-                                    controller.releaseUsbForUvc()
-                                    uvcSession.bindPreview(view)
-                                    uvcSession.start()
-                                } catch (e: Exception) {
-                                    Log.e("Capture", "UVC start failed", e)
-                                }
+                        factory = { ctx -> UVCCameraTextureView(ctx) },
+                        update = { view ->
+                            val session = uvcSession ?: return@AndroidView
+                            if (uvcBound) return@AndroidView
+                            runCatching {
+                                session.bindPreview(view)
+                                session.start()
+                                uvcBound = true
+                            }.onFailure { e ->
+                                Log.e("Capture", "UVC bind/start failed", e)
+                                uvcLabel = "UVC error: ${e.message}"
                             }
                         },
                         modifier = Modifier.fillMaxSize(),
@@ -256,7 +306,7 @@ fun CaptureScreen(
                                 CircularProgressIndicator(color = Accent)
                                 Spacer(Modifier.height(12.dp))
                                 Text(
-                                    uvcLabel.ifBlank { "Conectando cámara USB3.0…" },
+                                    uvcLabel.ifBlank { "Conectando cámara USB3.0… Acepte permiso USB si aparece." },
                                     color = Paper,
                                     style = MaterialTheme.typography.bodyLarge,
                                     textAlign = TextAlign.Center,
@@ -264,15 +314,26 @@ fun CaptureScreen(
                                 Spacer(Modifier.height(12.dp))
                                 Button(
                                     onClick = {
-                                        controller.releaseUsbForUvc()
-                                        uvcSession.retryConnect()
+                                        scope.launch {
+                                            uvcBound = false
+                                            vm.releaseUvcSession()
+                                            activity?.let { act ->
+                                                runCatching {
+                                                    val session = vm.prepareUvcSession(act)
+                                                    uvcSession = session
+                                                    session.retryConnect()
+                                                }
+                                            }
+                                        }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara") }
                                 Spacer(Modifier.height(8.dp))
                                 OutlinedButton(
                                     onClick = {
-                                        runCatching { uvcSession.release() }
+                                        vm.releaseUvcSession()
+                                        uvcSession = null
+                                        uvcBound = false
                                         useUvc = false
                                     },
                                 ) { Text("Usar cámara alternativa") }
@@ -398,9 +459,9 @@ fun CaptureScreen(
                                     "sessions/capture_${System.currentTimeMillis()}",
                                 ).apply { mkdirs() }
                                 if (useUvc && uvcSession != null) {
-                                    if (!uvcSession.awaitReady()) {
-                                        status = "Cámara UVC no lista: ${uvcSession.statusLabel}. " +
-                                            "Revise permiso USB y Ajustes → Diagnóstico."
+                                    if (!uvcSession!!.awaitReady()) {
+                                        status = "Cámara del analizador no lista: ${uvcSession!!.statusLabel}. " +
+                                            "Pulse Reintentar o acepte permiso USB."
                                         return@launch
                                     }
                                 }
@@ -409,15 +470,16 @@ fun CaptureScreen(
                                     status = "Luz ${index + 1}/8: ${mode.displayName}"
                                     val oemFile = File(sessionDir, OemCaptureFiles.filenameFor(mode))
                                     val bmp = if (useUvc && uvcSession != null) {
+                                        val session = uvcSession!!
                                         withContext(Dispatchers.IO) {
-                                            uvcSession.applyLightMode(mode)
+                                            session.applyLightMode(mode)
                                             if (controller.usingSerial) {
                                                 runCatching { controller.applyLightMode(mode) }
                                             }
                                         }
                                         delay(350)
                                         withContext(Dispatchers.IO) {
-                                            uvcSession.captureStill(oemFile)
+                                            session.captureStill(oemFile)
                                         }
                                     } else {
                                         withContext(Dispatchers.IO) {

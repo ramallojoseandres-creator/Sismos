@@ -1,10 +1,7 @@
 package com.mlh.skinanalyzer.ui
 
 import android.util.Log
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
@@ -14,7 +11,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.navigation.navOptions
@@ -33,7 +29,6 @@ import com.mlh.skinanalyzer.ui.screens.PatientsScreen
 import com.mlh.skinanalyzer.ui.screens.ReportScreen
 import com.mlh.skinanalyzer.ui.screens.SessionListScreen
 import com.mlh.skinanalyzer.ui.screens.SettingsScreen
-import com.mlh.skinanalyzer.ui.theme.Accent
 
 object Routes {
     const val HOME = "home"
@@ -144,42 +139,23 @@ fun AppNav(vm: AppViewModel = viewModel()) {
             arguments = listOf(navArgument("patientId") { type = NavType.LongType }),
         ) { entry ->
             val patientId = entry.arguments!!.getLong("patientId")
-            var patient by remember(patientId) {
-                mutableStateOf(
-                    vm.capturePatient?.takeIf { it.id == patientId }
-                        ?: vm.findPatientById(patientId),
-                )
-            }
-            var loadFailed by remember(patientId) { mutableStateOf(false) }
-            LaunchedEffect(patientId) {
-                if (patient != null) return@LaunchedEffect
-                runCatching {
-                    patient = vm.getPatient(patientId)
-                }.onFailure {
-                    Log.e("MLH", "load patient for capture id=$patientId", it)
-                }
-                loadFailed = patient == null
-            }
-            when {
-                patient != null -> CaptureScreen(
-                    patient = patient,
-                    controller = vm.lightController,
-                    onBack = { nav.popBackStack() },
-                    onFinished = { paths, moisture, sessionDir ->
-                        vm.runAnalysis(patientId, paths, moisture, sessionDir) { sessionId ->
-                            nav.navigate("report/$sessionId") {
-                                popUpTo(Routes.HOME)
-                            }
+            CaptureScreen(
+                patientId = patientId,
+                vm = vm,
+                controller = vm.lightController,
+                onBack = {
+                    vm.releaseUvcSession()
+                    nav.popBackStack()
+                },
+                onFinished = { paths, moisture, sessionDir ->
+                    vm.runAnalysis(patientId, paths, moisture, sessionDir) { sessionId ->
+                        vm.releaseUvcSession()
+                        nav.navigate("report/$sessionId") {
+                            popUpTo(Routes.HOME)
                         }
-                    },
-                )
-                loadFailed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    androidx.compose.material3.Text("Paciente no encontrado (id=$patientId)")
-                }
-                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Accent)
-                }
-            }
+                    }
+                },
+            )
         }
         composable(
             route = Routes.REPORT,

@@ -30,6 +30,7 @@ import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.data.ProductRec
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.Mj008LightController
+import com.mlh.skinanalyzer.hardware.Mj008UvcSession
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -72,8 +73,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var userMessage by mutableStateOf<String?>(null)
         private set
+    /** True while Captura screen owns the USB3.0 analyzer camera. */
+    var isCaptureScreenActive by mutableStateOf(false)
+        private set
 
     val lightController = Mj008LightController(app)
+
+    private var uvcSession: Mj008UvcSession? = null
 
     fun clearUserMessage() {
         userMessage = null
@@ -88,6 +94,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             Log.w("MLH", "openCapture rejected: invalid id=$patientId")
             return
         }
+        releaseUvcSession()
         findPatientById(patientId)?.let { cached ->
             capturePatient = cached
             Log.i("MLH", "openCapture cached id=$patientId name=${cached.name}")
@@ -105,6 +112,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Log.e("MLH", "openCapture: patient not found id=$patientId")
             }
         }
+    }
+
+    fun markCaptureActive(active: Boolean) {
+        isCaptureScreenActive = active
+    }
+
+    /** Release UVC synchronously — must finish before opening a new USB session. */
+    fun releaseUvcSession() {
+        try {
+            uvcSession?.release()
+        } catch (e: Exception) {
+            Log.e("MLH", "releaseUvcSession", e)
+        } finally {
+            uvcSession = null
+        }
+    }
+
+    fun getUvcSession(): Mj008UvcSession? = uvcSession
+
+    /**
+     * Hand off USB from LED (USB-XU) to UVC preview. Waits briefly so the MJ-008
+     * firmware releases the device (avoids "cámara offline" on re-entry).
+     */
+    suspend fun prepareUvcSession(activity: android.app.Activity): Mj008UvcSession {
+        releaseUvcSession()
+        lightController.releaseUsbForUvc()
+        kotlinx.coroutines.delay(450)
+        withContext(Dispatchers.IO) {
+            runCatching {
+                lightController.openSerialOnly()
+            }
+        }
+        return Mj008UvcSession(activity).also { uvcSession = it }
     }
 
     init {
@@ -157,6 +197,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshHardware() {
+        if (isCaptureScreenActive) {
+            Log.i("MLH", "refreshHardware skipped — Captura activa")
+            return
+        }
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val detection = Mj008Hardware.detect(getApplication())
