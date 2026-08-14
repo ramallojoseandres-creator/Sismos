@@ -2,8 +2,11 @@ package com.mlh.skinanalyzer.ui.screens
 
 import android.app.Activity
 import android.Manifest
+import android.content.Context
+import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
+import android.hardware.usb.UsbManager
 import android.util.Log
 import android.util.Size
 import android.view.ViewGroup
@@ -53,7 +56,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -68,12 +70,15 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.mlh.skinanalyzer.BuildConfig
 import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
+import com.mlh.skinanalyzer.hardware.Mj008UsbDevices
 import com.mlh.skinanalyzer.hardware.LightMode
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
+import com.mlh.skinanalyzer.hardware.UsbXuLightController
 import com.mlh.skinanalyzer.ui.AppViewModel
 import com.serenegiant.widget.UVCCameraTextureView
 import com.mlh.skinanalyzer.ui.theme.Accent
@@ -90,6 +95,15 @@ import java.util.concurrent.Executors
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 
+private fun Context.findActivity(): Activity? {
+    var ctx: Context? = this
+    while (ctx is ContextWrapper) {
+        if (ctx is Activity) return ctx
+        ctx = ctx.baseContext
+    }
+    return null
+}
+
 @Composable
 fun CaptureScreen(
     patientId: Long,
@@ -102,6 +116,7 @@ fun CaptureScreen(
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     val detection = remember { runCatching { Mj008Hardware.detect(context) }.getOrNull() }
+    val activity = remember(context) { context.findActivity() }
 
     var patient by remember(patientId) {
         mutableStateOf(
@@ -121,56 +136,73 @@ fun CaptureScreen(
                 PackageManager.PERMISSION_GRANTED,
         )
     }
-    val activity = context as? Activity
-    var useUvc by remember { mutableStateOf(activity != null) }
+    var useUvc by remember { mutableStateOf(true) }
     var uvcSession by remember { mutableStateOf<Mj008UvcSession?>(null) }
+    var textureView by remember { mutableStateOf<UVCCameraTextureView?>(null) }
     var uvcStartToken by remember { mutableIntStateOf(0) }
-
-    var uvcLabel by remember { mutableStateOf("") }
+    var uvcLabel by remember { mutableStateOf("Iniciando UVC…") }
     var uvcReady by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted ->
-        hasCamPermission = granted
-    }
+    ) { granted -> hasCamPermission = granted }
 
-    // CAMERA permission is for CameraX fallback only — UVC uses USB permission.
     LaunchedEffect(Unit) {
-        if (!hasCamPermission) {
-            permissionLauncher.launch(Manifest.permission.CAMERA)
-        }
+        if (!hasCamPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
     }
 
     var moistureText by remember { mutableStateOf("") }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var status by remember {
-        mutableStateOf(
-            "Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece.",
-        )
+        mutableStateOf("Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece.")
     }
 
-    LaunchedEffect(Unit) {
-        vm.markCaptureActive(true)
-    }
+    LaunchedEffect(Unit) { vm.markCaptureActive(true) }
 
-    // Start UVC as soon as Captura opens — do not wait for CAMERA permission.
-    LaunchedEffect(useUvc, activity, uvcStartToken) {
-        if (!useUvc || activity == null) {
-            uvcSession = null
+    // Reliable path: wait for TextureView, then prepare+bind+start on main thread.
+    LaunchedEffect(useUvc, textureView, uvcStartToken) {
+        if (!useUvc) return@LaunchedEffect
+        val act = activity
+        if (act == null) {
+            uvcLabel = "Error: Activity no encontrada (v${BuildConfig.VERSION_NAME})"
             return@LaunchedEffect
         }
+        val view = textureView
+        if (view == null) {
+            uvcLabel = "Creando vista UVC… (v${BuildConfig.VERSION_NAME})"
+            return@LaunchedEffect
+        }
+
         uvcReady = false
-        uvcLabel = "Preparando cámara USB3.0 del analizador…"
+        uvcLabel = "Liberando USB y abriendo cámara frontal… (v${BuildConfig.VERSION_NAME})"
+        val usbSummary = runCatching {
+            val mgr = context.getSystemService(Context.USB_SERVICE) as UsbManager
+            val list = mgr.deviceList.values.toList()
+            val pick = Mj008UsbDevices.pickAnalyzerCamera(list)
+            "USB=${list.size} pick=${pick?.let { UsbXuLightController.describe(it.device) + " s=" + it.score } ?: "ninguno"}"
+        }.getOrDefault("USB=?")
+        Log.i("Capture", usbSummary)
+        uvcLabel = "$usbSummary — preparando…"
+
         runCatching {
-            val session = vm.prepareUvcSession(activity)
+            val session = vm.prepareUvcSession(act)
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
+            withContext(Dispatchers.Main) {
+                session.bindPreview(view)
+                session.start()
+            }
             uvcSession = session
             uvcLabel = session.statusLabel
-            Log.i("Capture", "UVC session prepared — waiting for TextureView bind")
+            Log.i("Capture", "UVC bind+start done: ${session.statusLabel}")
+            // Keep probing a few seconds so USB permission dialog can appear.
+            repeat(20) {
+                delay(500)
+                uvcLabel = session.statusLabel
+                if (session.isReady) return@repeat
+            }
         }.onFailure {
-            Log.e("Capture", "prepareUvcSession failed", it)
-            uvcLabel = "Error cámara: ${it.message}"
+            Log.e("Capture", "UVC prepare/bind/start failed", it)
+            uvcLabel = "Error UVC: ${it.message}"
         }
     }
 
@@ -178,13 +210,16 @@ fun CaptureScreen(
         if (!useUvc) return@LaunchedEffect
         var lit = false
         while (true) {
-            uvcLabel = uvcSession?.statusLabel.orEmpty().ifBlank { "UVC…" }
-            val readyNow = uvcSession?.isReady == true
-            uvcReady = readyNow
-            if (readyNow && !lit) {
-                lit = true
-                runCatching { uvcSession?.applyWhiteLight() }
-                status = "Cámara frontal del analizador lista. Coloque el mentón y pulse Iniciar."
+            val session = uvcSession
+            if (session != null) {
+                uvcLabel = session.statusLabel
+                val readyNow = session.isReady
+                uvcReady = readyNow
+                if (readyNow && !lit) {
+                    lit = true
+                    runCatching { session.applyWhiteLight() }
+                    status = "Cámara frontal lista. Coloque el mentón y pulse Iniciar."
+                }
             }
             delay(400)
         }
@@ -195,11 +230,7 @@ fun CaptureScreen(
             vm.markCaptureActive(false)
             vm.releaseUvcSession()
             uvcSession = null
-            scope.launch(Dispatchers.IO) {
-                if (!useUvc) {
-                    runCatching { controller.turnOff() }
-                }
-            }
+            textureView = null
         }
     }
 
@@ -242,6 +273,11 @@ fun CaptureScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink.copy(alpha = 0.6f),
                 )
+                Text(
+                    "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = Ink.copy(alpha = 0.45f),
+                )
             }
             Text("${captured.size}/8", style = MaterialTheme.typography.titleLarge, color = Accent)
         }
@@ -260,34 +296,20 @@ fun CaptureScreen(
                 .border(1.dp, Ink.copy(alpha = 0.2f))
                 .background(Ink),
         ) {
-            if (useUvc && activity != null) {
-                    val session = uvcSession
-                    if (session != null) {
-                        key(session) {
-                            AndroidView(
-                                factory = { ctx ->
-                                    UVCCameraTextureView(ctx).also { view ->
-                                        try {
-                                            session.bindPreview(view)
-                                            session.start()
-                                            Log.i("Capture", "UVC bind+start OK")
-                                        } catch (e: Exception) {
-                                            Log.e("Capture", "UVC bind/start failed", e)
-                                            uvcLabel = "UVC error: ${e.message}"
-                                        }
-                                    }
-                                },
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    } else {
-                        Box(
-                            Modifier.fillMaxSize(),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            CircularProgressIndicator(color = Accent)
-                        }
-                    }
+            if (useUvc) {
+                    // Always mount TextureView so LaunchedEffect can bind+start.
+                    AndroidView(
+                        factory = { ctx ->
+                            UVCCameraTextureView(ctx).also { view ->
+                                textureView = view
+                                Log.i("Capture", "TextureView created")
+                            }
+                        },
+                        update = { view ->
+                            if (textureView !== view) textureView = view
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
                     if (!uvcReady) {
                         Box(
                             Modifier
@@ -302,21 +324,19 @@ fun CaptureScreen(
                                 CircularProgressIndicator(color = Accent)
                                 Spacer(Modifier.height(12.dp))
                                 Text(
-                                    uvcLabel.ifBlank { "Conectando cámara USB3.0… Acepte permiso USB si aparece." },
+                                    uvcLabel.ifBlank { "Conectando USB3.0…" },
                                     color = Paper,
                                     style = MaterialTheme.typography.bodyLarge,
                                     textAlign = TextAlign.Center,
                                 )
                                 Spacer(Modifier.height(12.dp))
                                 Button(
-                                    onClick = {
-                                        uvcStartToken++
-                                    },
+                                    onClick = { uvcStartToken++ },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara frontal USB3.0") }
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    "Acepte el diálogo de permiso USB. Solo la USB3.0 del analizador enciende las luces.",
+                                    "Acepte el diálogo de permiso USB. Debe ver v${BuildConfig.VERSION_NAME} arriba.",
                                     color = Paper.copy(alpha = 0.75f),
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
