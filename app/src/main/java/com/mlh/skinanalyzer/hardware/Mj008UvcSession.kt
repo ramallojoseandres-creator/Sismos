@@ -3,13 +3,13 @@ package com.mlh.skinanalyzer.hardware
 import android.app.Activity
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
-import android.graphics.SurfaceTexture
 import android.hardware.usb.UsbDevice
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
 import android.view.Surface
 import com.serenegiant.usb.USBMonitor
 import com.serenegiant.usbcameracommon.UVCCameraHandler
-import com.serenegiant.widget.CameraViewInterface
 import com.serenegiant.widget.UVCCameraTextureView
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -28,8 +28,11 @@ class Mj008UvcSession(
     private var cameraHandler: UVCCameraHandler? = null
     private var previewView: UVCCameraTextureView? = null
     private var previewSurface: Surface? = null
-    private val ready = CompletableDeferred<Boolean>()
+    private var ready = CompletableDeferred<Boolean>()
     private val started = AtomicBoolean(false)
+    private val mainHandler = Handler(Looper.getMainLooper())
+    @Volatile var lastStatus: String = "UVC: inactivo"
+        private set
 
     val isReady: Boolean
         get() = cameraHandler?.isOpened == true && cameraHandler?.isPreviewing == true
@@ -37,14 +40,20 @@ class Mj008UvcSession(
     val statusLabel: String
         get() = when {
             isReady -> "UVC ${Mj008Hardware.PREVIEW_WIDTH}×${Mj008Hardware.PREVIEW_HEIGHT} @ ${Mj008Hardware.PREVIEW_ORIENTATION}°"
-            ready.isCompleted && runCatching { ready.getCompleted() }.getOrNull() == false ->
-                "UVC: cámara MJ-008 no conectada"
-            else -> "UVC: conectando…"
+            else -> lastStatus
         }
 
     private val deviceListener = object : USBMonitor.OnDeviceConnectListener {
         override fun onAttach(device: UsbDevice?) {
-            if (device == null || !UsbXuLightController.isMj008Camera(device)) return
+            if (device == null) return
+            if (!UsbXuLightController.isMj008Camera(device) &&
+                !UsbXuLightController.hasVideoInterface(device)
+            ) {
+                Log.d(TAG, "Ignorando USB no-vídeo: ${UsbXuLightController.describe(device)}")
+                return
+            }
+            lastStatus = "UVC: solicitando permiso ${UsbXuLightController.describe(device)}"
+            Log.i(TAG, lastStatus)
             usbMonitor?.requestPermission(device)
         }
 
@@ -55,7 +64,7 @@ class Mj008UvcSession(
         ) {
             val handler = cameraHandler ?: return
             val view = previewView ?: return
-            if (ctrlBlock == null) return
+            if (ctrlBlock == null || device == null) return
             try {
                 handler.open(ctrlBlock)
                 val tex = view.surfaceTexture
@@ -63,27 +72,43 @@ class Mj008UvcSession(
                     previewSurface?.release()
                     previewSurface = Surface(tex)
                     handler.startPreview(previewSurface)
+                } else {
+                    // Surface may arrive a moment later — retry briefly.
+                    mainHandler.postDelayed({
+                        runCatching {
+                            val t = view.surfaceTexture ?: return@runCatching
+                            previewSurface?.release()
+                            previewSurface = Surface(t)
+                            handler.startPreview(previewSurface)
+                        }
+                    }, 400)
                 }
-                if (!ready.isCompleted) ready.complete(true)
-                Log.i(TAG, "UVC preview started on ${UsbXuLightController.describe(device!!)}")
+                lastStatus = "UVC conectada: ${UsbXuLightController.describe(device)}"
+                Log.i(TAG, lastStatus)
+                completeReady(true)
             } catch (e: Exception) {
+                lastStatus = "UVC error: ${e.message}"
                 Log.e(TAG, "UVC connect failed", e)
-                if (!ready.isCompleted) ready.complete(false)
+                completeReady(false)
             }
         }
 
         override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
             cameraHandler?.stopPreview()
-            if (!ready.isCompleted) ready.complete(false)
+            lastStatus = "UVC: desconectada"
+            completeReady(false)
         }
 
         override fun onDetach(device: UsbDevice?) {
             cameraHandler?.close()
-            if (!ready.isCompleted) ready.complete(false)
+            lastStatus = "UVC: detach"
+            completeReady(false)
         }
 
         override fun onCancel(device: UsbDevice?) {
-            if (!ready.isCompleted) ready.complete(false)
+            lastStatus = "UVC: permiso USB denegado"
+            Log.w(TAG, lastStatus)
+            completeReady(false)
         }
     }
 
@@ -103,25 +128,63 @@ class Mj008UvcSession(
     }
 
     fun start() {
-        if (!started.compareAndSet(false, true)) return
+        if (!started.compareAndSet(false, true)) {
+            // Already started — still re-probe devices (hotplug / late permission).
+            probeAttachedDevices()
+            return
+        }
+        ready = CompletableDeferred()
+        lastStatus = "UVC: registrando USBMonitor…"
         if (usbMonitor == null) {
             usbMonitor = USBMonitor(activity, deviceListener)
         }
         previewView?.onResume()
         usbMonitor?.register()
+        // Devices already plugged in may not fire onAttach until we ask.
+        mainHandler.postDelayed({ probeAttachedDevices() }, 500)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 2000)
+    }
+
+    private fun probeAttachedDevices() {
+        val monitor = usbMonitor ?: return
+        try {
+            val list = monitor.deviceList
+            lastStatus = "UVC: USB detectados=${list.size}"
+            Log.i(TAG, "$lastStatus → ${list.map { UsbXuLightController.describe(it) }}")
+            if (list.isEmpty()) {
+                lastStatus = "UVC: sin dispositivos USB (¿cámara interna apagada?)"
+                return
+            }
+            for (device in list) {
+                if (UsbXuLightController.isMj008Camera(device) ||
+                    UsbXuLightController.hasVideoInterface(device)
+                ) {
+                    lastStatus = "UVC: pidiendo permiso ${UsbXuLightController.describe(device)}"
+                    monitor.requestPermission(device)
+                    return
+                }
+            }
+            // Last resort: first USB device (some MJ firmwares omit video class flags).
+            val first = list.first()
+            lastStatus = "UVC: intentando primer USB ${UsbXuLightController.describe(first)}"
+            monitor.requestPermission(first)
+        } catch (e: Exception) {
+            Log.e(TAG, "probeAttachedDevices", e)
+            lastStatus = "UVC probe: ${e.message}"
+        }
     }
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
         runCatching { turnOff() }
-        usbMonitor?.unregister()
+        runCatching { usbMonitor?.unregister() }
         previewView?.onPause()
     }
 
-    suspend fun awaitReady(timeoutMs: Long = 20_000): Boolean = try {
+    suspend fun awaitReady(timeoutMs: Long = 25_000): Boolean = try {
         withTimeout(timeoutMs) { ready.await() }
     } catch (_: Exception) {
-        false
+        isReady
     }
 
     fun applyLightMode(mode: LightMode) {
@@ -133,7 +196,10 @@ class Mj008UvcSession(
 
     fun turnOff() {
         val handler = cameraHandler ?: return
-        val payload = UsbXuLightController.lightPayload(UsbXuLightController.CMD_WOODS, UsbXuLightController.ARG_OFF)
+        val payload = UsbXuLightController.lightPayload(
+            UsbXuLightController.CMD_WOODS,
+            UsbXuLightController.ARG_OFF,
+        )
         handler.controlLed(130, 55318, payload)
     }
 
@@ -142,7 +208,7 @@ class Mj008UvcSession(
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
         handler.captureStill(target.absolutePath)
-        repeat(30) {
+        repeat(40) {
             delay(100)
             if (target.exists() && target.length() > 10_000) {
                 return BitmapFactory.decodeFile(target.absolutePath)
@@ -160,15 +226,17 @@ class Mj008UvcSession(
         cameraHandler = null
         usbMonitor = null
         previewView = null
+        started.set(false)
+    }
+
+    private fun completeReady(ok: Boolean) {
+        if (!ready.isCompleted) ready.complete(ok)
     }
 
     companion object {
         private const val TAG = "Mj008Uvc"
 
-        fun isSupported(activity: Activity): Boolean {
-            return runCatching {
-                Mj008Hardware.detect(activity).usbXuCameraPresent
-            }.getOrDefault(false)
-        }
+        /** Always try UVC on MJ-008; USB list can be empty until USBMonitor registers. */
+        fun shouldPreferUvc(activity: Activity): Boolean = true
     }
 }

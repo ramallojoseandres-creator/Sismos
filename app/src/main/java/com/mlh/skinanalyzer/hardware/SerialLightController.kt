@@ -9,17 +9,17 @@ import java.io.OutputStream
 import java.nio.charset.Charset
 
 /**
- * MJ-008 light board controller via UART `/dev/ttyS4`.
+ * MJ-008 light board controller via UART (eng menu: `/dev/ttyS1` @ 9600).
  *
- * Text protocol (115200, GB18030 + "\n\r"):
+ * Text protocol (115200, GB18030 + "\n\r") on some Moji boards:
  *   TCCCMD_W / N / P / UV / WS + percent   (center channel)
  *   TCLCMD_* / TCRCMD_*                    (left / right)
  *   TCCMD_OFF, TCCMD_PWM_SETL, TC_HEART
  *
- * Legacy binary (9600): AA 66 cmd arg 23 — kept as fallback for older MJ boards.
+ * Legacy binary (9600): AA 66 cmd arg 23 — matches MJ-008 eng-tools baud.
  */
 class SerialLightController(
-    private val devicePath: String = Mj008Hardware.SERIAL_DEVICE,
+    private var devicePath: String = Mj008Hardware.SERIAL_DEVICE,
     private var baudRate: Int = Mj008Hardware.SERIAL_BAUD_PRIMARY,
 ) : LightController {
     private var outputStream: OutputStream? = null
@@ -30,7 +30,7 @@ class SerialLightController(
     override var lastError: String? = null
         private set
     override val backendLabel: String
-        get() = if (usingLegacyBinary) "UART-legacy-9600" else "UART-ttyS4"
+        get() = if (usingLegacyBinary) "UART-legacy-$baudRate" else "UART-$devicePath@$baudRate"
     var activePreset: Mj008Hardware.LightPreset =
         Mj008Hardware.presetFor(Mj008Hardware.CameraVariant.MOJI_25443)
         private set
@@ -44,30 +44,46 @@ class SerialLightController(
     override fun open(): Boolean {
         close()
         return try {
+            val candidate = Mj008Hardware.findSerialPort()
+            if (candidate != null) {
+                devicePath = candidate.path
+                baudRate = candidate.baud
+            }
             val file = File(devicePath)
             if (!file.exists()) {
                 lastError = "MJ-008: puerto LED no encontrado ($devicePath)"
                 Log.w(TAG, lastError!!)
                 return false
             }
-            baudRate = Mj008Hardware.SERIAL_BAUD_PRIMARY
-            usingLegacyBinary = false
-            var opened = openWithNative(file) || openWithStreams(file)
-            if (!opened) {
-                // Some MJ-008 boards expose the older 9600 AA66 path
-                baudRate = Mj008Hardware.SERIAL_BAUD_LEGACY
-                usingLegacyBinary = true
-                opened = openWithNative(file) || openWithStreams(file)
-            }
-            isOpen = opened
-            if (opened) {
-                lastError = null
-                if (!usingLegacyBinary) {
-                    sendRawText(CMD_MULTI_MODE)
-                    sendHeartbeat()
+            // Eng menu uses 9600 on ttyS1 — try that first as binary, then text @ same baud,
+            // then other candidates.
+            val attempts = buildList {
+                add(candidate ?: Mj008Hardware.SerialCandidate(devicePath, baudRate))
+                add(Mj008Hardware.SerialCandidate(devicePath, 9600))
+                add(Mj008Hardware.SerialCandidate(devicePath, 115200))
+                addAll(Mj008Hardware.SERIAL_CANDIDATES)
+            }.distinctBy { "${it.path}@${it.baud}" }
+
+            for (c in attempts) {
+                if (!File(c.path).exists()) continue
+                devicePath = c.path
+                baudRate = c.baud
+                usingLegacyBinary = c.baud == 9600
+                val opened = openWithNative(File(c.path)) || openWithStreams(File(c.path))
+                if (opened) {
+                    isOpen = true
+                    lastError = null
+                    if (!usingLegacyBinary) {
+                        sendRawText(CMD_MULTI_MODE)
+                        sendHeartbeat()
+                    }
+                    Log.i(TAG, "Opened $devicePath @ $baudRate binary=$usingLegacyBinary")
+                    return true
                 }
             }
-            opened
+            isOpen = false
+            lastError = "MJ-008: no se pudo abrir UART (probado ttyS1/ttyS4…)"
+            false
         } catch (e: Exception) {
             lastError = e.message
             Log.e(TAG, "MJ-008 open failed", e)

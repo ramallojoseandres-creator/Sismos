@@ -60,6 +60,7 @@ fun SettingsScreen(
     clinic: ClinicProfile,
     indicators: List<IndicatorPref>,
     hardwareStatus: String,
+    hardwareDiagnostics: String = "",
     onBack: () -> Unit,
     onSaveClinic: (ClinicProfile) -> Unit,
     onToggleIndicator: (String, Boolean) -> Unit,
@@ -165,6 +166,21 @@ fun SettingsScreen(
                 shape = RoundedCornerShape(4.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
             ) { Text("Reconectar luces / USB") }
+            if (hardwareDiagnostics.isNotBlank()) {
+                Spacer(Modifier.height(8.dp))
+                Text("Diagnóstico USB / serie", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    hardwareDiagnostics,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Ink.copy(alpha = 0.7f),
+                )
+                Text(
+                    "Si USB total = 0: la cámara UVC no está enumerada. Acepte el diálogo de permiso USB al capturar. " +
+                        "El menú de ingeniería muestra /dev/ttyS1 @ 9600 — la app ya lo prioriza para LEDs.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Ink.copy(alpha = 0.5f),
+                )
+            }
 
             Spacer(Modifier.height(12.dp))
             Text(

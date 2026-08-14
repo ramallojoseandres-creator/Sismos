@@ -267,7 +267,11 @@ class UsbXuLightController(
             if (serial.equals("USB3.0", ignoreCase = true)) return true
             if (product.equals("USB3.0", ignoreCase = true)) return true
             if (product.equals("USB Camera", ignoreCase = true)) return true
+            if (product.contains("Camera", ignoreCase = true)) return true
+            if (product.contains("UVC", ignoreCase = true)) return true
             if (device.productId in Mj008Hardware.knownCameraProductIds) return true
+            // MJ-008 tablets sometimes expose the analyzer cam without OEM name strings.
+            if (hasVideoInterface(device)) return true
             return false
         }
 

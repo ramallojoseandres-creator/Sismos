@@ -48,6 +48,7 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 clinic = vm.clinic,
                 indicators = vm.indicatorPrefs,
                 hardwareStatus = vm.hardwareStatus,
+                hardwareDiagnostics = vm.hardwareDiagnostics,
                 onBack = { nav.popBackStack() },
                 onSaveClinic = { vm.saveClinic(it) },
                 onToggleIndicator = { key, enabled -> vm.setIndicatorEnabled(key, enabled) },

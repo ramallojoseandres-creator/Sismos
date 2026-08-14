@@ -57,6 +57,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var hardwareStatus by mutableStateOf("Comprobando MJ-008…")
         private set
+    var hardwareDiagnostics by mutableStateOf("")
+        private set
     var mj008Detection by mutableStateOf<Mj008Hardware.Detection?>(null)
         private set
     var analyzing by mutableStateOf(false)
@@ -123,16 +125,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 val detection = Mj008Hardware.detect(getApplication())
                 mj008Detection = detection
                 lightController.setCameraVariant(detection.cameraVariant)
+                hardwareDiagnostics = detection.diagnostics
                 val ok = lightController.open()
                 hardwareStatus = if (ok) {
                     "MJ-008 listo · LED ${lightController.backendLabel} · cámara ${detection.cameraVariant.name} · offline"
                 } else {
                     detection.summary + " · " +
-                        (lightController.lastError ?: "LED no conectado; captura disponible")
+                        (lightController.lastError ?: "LED no conectado; captura UVC disponible")
                 }
+                Log.i("MLH", "HW diagnostics:\n${detection.diagnostics}")
             }.onFailure {
                 Log.e("MLH", "refreshHardware", it)
                 hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
+                hardwareDiagnostics = it.stackTraceToString().take(800)
             }
         }
     }

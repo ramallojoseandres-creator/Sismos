@@ -110,10 +110,19 @@ fun CaptureScreen(
 
     val activity = context as? Activity
     val useUvc = remember(activity) {
-        activity != null && Mj008UvcSession.isSupported(activity)
+        activity != null && Mj008UvcSession.shouldPreferUvc(activity)
     }
     val uvcSession = remember(activity) {
         activity?.let { Mj008UvcSession(it) }
+    }
+
+    var uvcLabel by remember { mutableStateOf(uvcSession?.statusLabel ?: "") }
+    LaunchedEffect(useUvc) {
+        if (!useUvc) return@LaunchedEffect
+        while (true) {
+            uvcLabel = uvcSession?.statusLabel.orEmpty()
+            delay(500)
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -121,7 +130,10 @@ fun CaptureScreen(
         withContext(Dispatchers.IO) {
             runCatching {
                 if (useUvc) {
-                    uvcSession?.start()
+                    // USBMonitor must register on main / after view bind; start() from UI factory too.
+                    detection?.let { controller.setCameraVariant(it.cameraVariant) }
+                    // Keep UART LED path as backup if UVC LED fails.
+                    runCatching { controller.open() }
                 } else {
                     detection?.let { controller.setCameraVariant(it.cameraVariant) }
                     controller.open()
@@ -160,7 +172,13 @@ fun CaptureScreen(
     var currentIndex by remember { mutableIntStateOf(0) }
     var capturing by remember { mutableStateOf(false) }
     var status by remember {
-        mutableStateOf("Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar.")
+        mutableStateOf(
+            if (useUvc) {
+                "Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece, luego pulse Iniciar."
+            } else {
+                "Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar."
+            },
+        )
     }
     var moistureText by remember { mutableStateOf("") }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
@@ -303,7 +321,7 @@ fun CaptureScreen(
             )
             Text(
                 when {
-                    useUvc -> uvcSession?.statusLabel ?: "UVC MJ-008"
+                    useUvc -> uvcLabel.ifBlank { "UVC MJ-008" }
                     controller.isOpen -> "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
                     else -> "MJ-008 LED: no disponible — captura igual"
                 },
@@ -336,7 +354,8 @@ fun CaptureScreen(
                                 ).apply { mkdirs() }
                                 if (useUvc && uvcSession != null) {
                                     if (!uvcSession.awaitReady()) {
-                                        status = "Cámara UVC MJ-008 no conectada. Revise USB."
+                                        status = "Cámara UVC no lista: ${uvcSession.statusLabel}. " +
+                                            "Revise permiso USB y Ajustes → Diagnóstico."
                                         return@launch
                                     }
                                 }
@@ -347,6 +366,8 @@ fun CaptureScreen(
                                     val bmp = if (useUvc && uvcSession != null) {
                                         withContext(Dispatchers.IO) {
                                             uvcSession.applyLightMode(mode)
+                                            // Eng-menu UART (/dev/ttyS1) backup if XU silent
+                                            runCatching { controller.applyLightMode(mode) }
                                         }
                                         delay(350)
                                         withContext(Dispatchers.IO) {
