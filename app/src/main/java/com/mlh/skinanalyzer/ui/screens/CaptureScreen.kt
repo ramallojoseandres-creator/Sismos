@@ -48,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.ui.text.style.TextAlign
@@ -71,6 +70,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.mlh.skinanalyzer.BuildConfig
+import com.mlh.skinanalyzer.analysis.DemoFrameGenerator
 import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.hardware.Mj008LightController
@@ -115,6 +115,7 @@ fun CaptureScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val demoMode = vm.demoMode
     val detection = remember { runCatching { Mj008Hardware.detect(context) }.getOrNull() }
     val activity = remember(context) { context.findActivity() }
 
@@ -136,32 +137,41 @@ fun CaptureScreen(
                 PackageManager.PERMISSION_GRANTED,
         )
     }
-    var useUvc by remember { mutableStateOf(true) }
+    // Demo never uses USB UVC; real mode defaults to UVC.
+    var useUvc by remember(demoMode) { mutableStateOf(!demoMode) }
     var uvcSession by remember { mutableStateOf<Mj008UvcSession?>(null) }
     var textureView by remember { mutableStateOf<UVCCameraTextureView?>(null) }
     var uvcStartToken by remember { mutableIntStateOf(0) }
-    var uvcLabel by remember { mutableStateOf("Iniciando UVC…") }
+    var uvcLabel by remember { mutableStateOf(if (demoMode) "Modo Demo" else "Iniciando UVC…") }
     var uvcReady by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
     ) { granted -> hasCamPermission = granted }
 
-    LaunchedEffect(Unit) {
-        if (!hasCamPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+    LaunchedEffect(demoMode) {
+        if (demoMode && !hasCamPermission) {
+            permissionLauncher.launch(Manifest.permission.CAMERA)
+        }
     }
 
     var moistureText by remember { mutableStateOf("") }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var status by remember {
-        mutableStateOf("Coloque el mentón y cierre los ojos. La cámara USB se abre sola (el diálogo USB a menudo no aparece).")
+        mutableStateOf(
+            if (demoMode) {
+                "Modo Demo: no hace falta la tablet. Pulse Iniciar para simular las 8 luces."
+            } else {
+                "Coloque el mentón y cierre los ojos. La cámara USB se abre sola (el diálogo USB a menudo no aparece)."
+            },
+        )
     }
 
     LaunchedEffect(Unit) { vm.markCaptureActive(true) }
 
     // Reliable path: wait for TextureView, then prepare+bind+start on main thread.
-    LaunchedEffect(useUvc, textureView, uvcStartToken) {
-        if (!useUvc) return@LaunchedEffect
+    LaunchedEffect(useUvc, textureView, uvcStartToken, demoMode) {
+        if (demoMode || !useUvc) return@LaunchedEffect
         val act = activity
         if (act == null) {
             uvcLabel = "Error: Activity no encontrada (v${BuildConfig.VERSION_NAME})"
@@ -194,7 +204,6 @@ fun CaptureScreen(
             uvcSession = session
             uvcLabel = session.statusLabel
             Log.i("Capture", "UVC bind+start done: ${session.statusLabel}")
-            // Keep probing a few seconds so USB permission dialog can appear.
             repeat(20) {
                 delay(500)
                 uvcLabel = session.statusLabel
@@ -211,8 +220,8 @@ fun CaptureScreen(
         }
     }
 
-    LaunchedEffect(useUvc, uvcSession) {
-        if (!useUvc) return@LaunchedEffect
+    LaunchedEffect(useUvc, uvcSession, demoMode) {
+        if (demoMode || !useUvc) return@LaunchedEffect
         var lit = false
         while (true) {
             val session = uvcSession
@@ -256,6 +265,7 @@ fun CaptureScreen(
     var currentIndex by remember { mutableIntStateOf(0) }
     var capturing by remember { mutableStateOf(false) }
     var captureBanner by remember { mutableStateOf("") }
+    var cameraXBound by remember { mutableStateOf(false) }
 
     val progress by animateFloatAsState(
         targetValue = captured.size / 8f,
@@ -273,14 +283,18 @@ fun CaptureScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
             }
             Column(Modifier.weight(1f)) {
-                Text("Captura MJ-008", style = MaterialTheme.typography.headlineMedium)
+                Text(
+                    if (demoMode) "Captura Demo" else "Captura MJ-008",
+                    style = MaterialTheme.typography.headlineMedium,
+                )
                 Text(
                     patient?.let { "${it.name} · ${it.age} años" } ?: "Paciente",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink.copy(alpha = 0.6f),
                 )
                 Text(
-                    "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                    "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})" +
+                        if (demoMode) " · DEMO" else "",
                     style = MaterialTheme.typography.labelLarge,
                     color = Ink.copy(alpha = 0.45f),
                 )
@@ -302,8 +316,8 @@ fun CaptureScreen(
                 .border(1.dp, Ink.copy(alpha = 0.2f))
                 .background(Ink),
         ) {
-            if (useUvc) {
-                    // Always mount TextureView so LaunchedEffect can bind+start.
+            when {
+                useUvc && !demoMode -> {
                     AndroidView(
                         factory = { ctx ->
                             UVCCameraTextureView(ctx).also { view ->
@@ -352,7 +366,8 @@ fun CaptureScreen(
                             }
                         }
                     }
-                } else if (hasCamPermission) {
+                }
+                hasCamPermission -> {
                     AndroidView(
                         factory = { ctx ->
                             val previewView = PreviewView(ctx).apply {
@@ -369,10 +384,10 @@ fun CaptureScreen(
                                     val preview = Preview.Builder().build()
                                     preview.setSurfaceProvider(previewView.surfaceProvider)
                                     provider.unbindAll()
-                                val selectors = listOf(
-                                    CameraSelector.DEFAULT_FRONT_CAMERA,
-                                    CameraSelector.DEFAULT_BACK_CAMERA,
-                                )
+                                    val selectors = listOf(
+                                        CameraSelector.DEFAULT_FRONT_CAMERA,
+                                        CameraSelector.DEFAULT_BACK_CAMERA,
+                                    )
                                     var bound = false
                                     for (selector in selectors) {
                                         try {
@@ -388,22 +403,36 @@ fun CaptureScreen(
                                             Log.w("Capture", "bind failed for selector", e)
                                         }
                                     }
+                                    cameraXBound = bound
                                     if (!bound) Log.e("Capture", "No camera could be bound")
                                 } catch (e: Exception) {
                                     Log.e("Capture", "camera provider error", e)
+                                    cameraXBound = false
                                 }
                             }, ContextCompat.getMainExecutor(ctx))
                             previewView
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
-                } else {
+                }
+                demoMode -> {
+                    Text(
+                        "Demo sin cámara: se generarán 8 fotogramas sintéticos al iniciar.",
+                        color = Paper,
+                        modifier = Modifier
+                            .align(Alignment.Center)
+                            .padding(24.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                else -> {
                     Text(
                         "Preparando vista de cámara…",
                         color = Paper,
                         modifier = Modifier.align(Alignment.Center),
                     )
                 }
+            }
             Box(
                 Modifier
                     .width(1.dp)
@@ -422,7 +451,6 @@ fun CaptureScreen(
                 )
             }
 
-            // OEM-style capture banner over the live preview
             if (capturing && captureBanner.isNotBlank()) {
                 Box(
                     Modifier
@@ -474,6 +502,8 @@ fun CaptureScreen(
             )
             Text(
                 when {
+                    demoMode && hasCamPermission -> "Demo · cámara del dispositivo (sin luces USB)"
+                    demoMode -> "Demo · fotogramas sintéticos (sin cámara / sin USB)"
                     useUvc && uvcReady -> "Luces vía USB-XU en cámara frontal · $uvcLabel"
                     useUvc -> uvcLabel.ifBlank { "Buscando USB3.0 frontal (vid 3804 / pid 12416)…" }
                     controller.isOpen -> "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
@@ -507,7 +537,7 @@ fun CaptureScreen(
                                     context.filesDir,
                                     "sessions/capture_${System.currentTimeMillis()}",
                                 ).apply { mkdirs() }
-                                if (useUvc && uvcSession != null) {
+                                if (!demoMode && useUvc && uvcSession != null) {
                                     if (!uvcSession!!.awaitReady()) {
                                         status = "Cámara del analizador no lista: ${uvcSession!!.statusLabel}. " +
                                             "Pulse Reintentar."
@@ -516,6 +546,7 @@ fun CaptureScreen(
                                     }
                                 }
                                 val total = LightMode.captureOrder.size
+                                val preferLiveCam = demoMode && hasCamPermission && cameraXBound
                                 for ((index, mode) in LightMode.captureOrder.withIndex()) {
                                     currentIndex = index
                                     val n = index + 1
@@ -524,26 +555,46 @@ fun CaptureScreen(
                                     } else {
                                         "Capturando última imagen…"
                                     }
-                                    status = "Foto $n/$total · ${mode.displayName}"
+                                    status = if (demoMode) {
+                                        "Demo $n/$total · ${mode.displayName}"
+                                    } else {
+                                        "Foto $n/$total · ${mode.displayName}"
+                                    }
                                     val oemFile = File(sessionDir, OemCaptureFiles.filenameFor(mode))
-                                    val bmp = if (useUvc && uvcSession != null) {
-                                        val session = uvcSession!!
-                                        withContext(Dispatchers.IO) {
-                                            session.applyLightMode(mode)
-                                            if (controller.usingSerial) {
-                                                runCatching { controller.applyLightMode(mode) }
+                                    val bmp = when {
+                                        demoMode && !preferLiveCam -> {
+                                            delay(280)
+                                            withContext(Dispatchers.Default) {
+                                                DemoFrameGenerator.createFrame(mode, oemFile)
                                             }
                                         }
-                                        delay(350)
-                                        withContext(Dispatchers.IO) {
-                                            session.captureStill(oemFile)
+                                        demoMode && preferLiveCam -> {
+                                            delay(220)
+                                            takePicture(imageCapture, cameraExecutor, oemFile)
+                                                ?: withContext(Dispatchers.Default) {
+                                                    DemoFrameGenerator.createFrame(mode, oemFile)
+                                                }
                                         }
-                                    } else {
-                                        withContext(Dispatchers.IO) {
-                                            controller.applyLightMode(mode)
+                                        useUvc && uvcSession != null -> {
+                                            val session = uvcSession!!
+                                            withContext(Dispatchers.IO) {
+                                                session.applyLightMode(mode)
+                                                if (controller.usingSerial) {
+                                                    runCatching { controller.applyLightMode(mode) }
+                                                }
+                                            }
+                                            delay(350)
+                                            withContext(Dispatchers.IO) {
+                                                session.captureStill(oemFile)
+                                            }
                                         }
-                                        delay(350)
-                                        takePicture(imageCapture, cameraExecutor, oemFile)
+                                        else -> {
+                                            withContext(Dispatchers.IO) {
+                                                controller.applyLightMode(mode)
+                                            }
+                                            delay(350)
+                                            takePicture(imageCapture, cameraExecutor, oemFile)
+                                        }
                                     }
                                     if (bmp != null || oemFile.exists()) {
                                         captured[mode.shortName] = oemFile.absolutePath to bmp
@@ -553,10 +604,10 @@ fun CaptureScreen(
                                     }
                                 }
                                 withContext(Dispatchers.IO) {
-                                    if (useUvc) {
-                                        runCatching { uvcSession?.turnOff() }
-                                    } else {
-                                        runCatching { controller.turnOff() }
+                                    when {
+                                        demoMode -> Unit
+                                        useUvc -> runCatching { uvcSession?.turnOff() }
+                                        else -> runCatching { controller.turnOff() }
                                     }
                                 }
                                 if (captured.isEmpty()) {
@@ -564,7 +615,7 @@ fun CaptureScreen(
                                     status = "Sin imágenes. Revisar cámara y permisos."
                                 } else {
                                     captureBanner = "Escaneo finalizado"
-                                    status = "8 espectros listos"
+                                    status = if (demoMode) "Demo: 8 espectros listos" else "8 espectros listos"
                                     delay(1200)
                                     captureBanner = "Analizando, por favor espere…"
                                     status = "Generando mapas e informe…"
@@ -584,7 +635,7 @@ fun CaptureScreen(
                             }
                         }
                     },
-                    enabled = patient != null && (useUvc || hasCamPermission),
+                    enabled = patient != null && (demoMode || useUvc || hasCamPermission),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
@@ -593,7 +644,7 @@ fun CaptureScreen(
                 ) {
                     Icon(Icons.Outlined.CameraAlt, null)
                     Spacer(Modifier.width(8.dp))
-                    Text("Iniciar análisis")
+                    Text(if (demoMode) "Iniciar análisis (Demo)" else "Iniciar análisis")
                 }
             }
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

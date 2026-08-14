@@ -1,6 +1,7 @@
 package com.mlh.skinanalyzer.ui
 
 import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.ImageDecoder
@@ -76,6 +77,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** True while Captura screen owns the USB3.0 analyzer camera. */
     var isCaptureScreenActive by mutableStateOf(false)
         private set
+
+    /**
+     * Demo / Simulación: skip USB3.0 UVC + LEDs. Use phone/emulator camera
+     * or synthetic frames so UI + informe can be tested without the tablet.
+     */
+    var demoMode by mutableStateOf(false)
+        private set
+
+    private val prefs = app.getSharedPreferences("mlh_prefs", Context.MODE_PRIVATE)
 
     val lightController = Mj008LightController(app)
 
@@ -174,6 +184,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 indicatorDao.observeAll().collectLatest { indicatorPrefs = it }
             }
         }
+        val savedDemo = prefs.getBoolean(KEY_DEMO_MODE, false)
+        val autoDemo = !savedDemo && isProbablyEmulator() && !prefs.contains(KEY_DEMO_MODE)
+        demoMode = if (autoDemo) {
+            prefs.edit().putBoolean(KEY_DEMO_MODE, true).apply()
+            true
+        } else {
+            savedDemo
+        }
+        refreshHardware()
+    }
+
+    fun enableDemoMode(enabled: Boolean) {
+        demoMode = enabled
+        prefs.edit().putBoolean(KEY_DEMO_MODE, enabled).apply()
         refreshHardware()
     }
 
@@ -199,6 +223,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshHardware() {
         if (isCaptureScreenActive) {
             Log.i("MLH", "refreshHardware skipped — Captura activa")
+            return
+        }
+        if (demoMode) {
+            hardwareStatus = "Modo Demo activo · sin USB MJ-008 · apto emulador / teléfono"
+            hardwareDiagnostics =
+                "Demo: la captura usa la cámara del teléfono/emulador o fotogramas sintéticos.\n" +
+                    "Las luces USB-XU y la cámara USB3.0 del analizador no se usan.\n" +
+                    "Desactive Demo en Ajustes cuando pruebe en la tablet MJ-008."
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -244,6 +276,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
                 hardwareDiagnostics = it.stackTraceToString().take(800)
             }
+        }
+    }
+
+    companion object {
+        private const val KEY_DEMO_MODE = "demo_mode"
+
+        fun isProbablyEmulator(): Boolean {
+            val fp = Build.FINGERPRINT.lowercase()
+            val model = Build.MODEL.lowercase()
+            val product = Build.PRODUCT.lowercase()
+            val manufacturer = Build.MANUFACTURER.lowercase()
+            return fp.contains("generic") ||
+                fp.contains("emulator") ||
+                model.contains("emulator") ||
+                model.contains("android sdk") ||
+                product.contains("sdk") ||
+                product.contains("emulator") ||
+                manufacturer.contains("genymotion") ||
+                Build.HARDWARE.contains("ranchu") ||
+                Build.HARDWARE.contains("goldfish")
         }
     }
 

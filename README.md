@@ -41,9 +41,19 @@ Reemplaza el software OEM chino (Miaojing / `com.ym.smart.skins`) **sin depender
 
 GitHub Actions publica el artefacto `MLH-Skin-Analyzer-Pro-MJ008-debug`.
 
+## Probar sin la tablet (emulador / teléfono)
+
+El **emulador de Android Studio** (o un teléfono) sirve para UI, pacientes, captura e informe.
+
+1. Instale el APK debug en el emulador (`./gradlew :app:assembleDebug` o el artefacto de Actions).
+2. Abra **Ajustes → Modo Demo / Simulación** (en emulador se activa solo la primera vez).
+3. Cree un paciente → **Analizar** → **Iniciar análisis (Demo)**.
+
+**Limitación:** el emulador **no** reproduce la cámara USB3.0 ni las luces USB-XU del MJ-008. Eso solo se valida en la tablet real con Demo **apagado**.
+
 ## Flujo
 
-1. Ajustes → datos del consultorio (opcional)
+1. Ajustes → datos del consultorio (opcional) · Demo si prueba fuera de la tablet
 2. Nuevo análisis → paciente → captura 8 luces
 3. Informe (resumen / capas / 3-5 ojos / cuidado) → Email o WhatsApp
 4. Historial → comparar dos sesiones

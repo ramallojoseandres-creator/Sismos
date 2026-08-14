@@ -61,6 +61,8 @@ fun SettingsScreen(
     indicators: List<IndicatorPref>,
     hardwareStatus: String,
     hardwareDiagnostics: String = "",
+    demoMode: Boolean = false,
+    onDemoModeChange: (Boolean) -> Unit = {},
     onBack: () -> Unit,
     onSaveClinic: (ClinicProfile) -> Unit,
     onToggleIndicator: (String, Boolean) -> Unit,
@@ -158,6 +160,33 @@ fun SettingsScreen(
             }
 
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
+            Text("Prueba sin tablet (Demo)", style = MaterialTheme.typography.titleLarge, color = Accent)
+            Text(
+                "Active esto en el emulador de Android Studio o en un teléfono para recorrer " +
+                    "pacientes → captura → informe sin USB3.0 ni luces MJ-008. " +
+                    "En la tablet real, déjelo apagado.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.55f),
+            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Cream, RoundedCornerShape(4.dp))
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text("Modo Demo / Simulación", style = MaterialTheme.typography.bodyLarge)
+                    Text(
+                        if (demoMode) "Captura simulada (sin analizador)" else "Captura real USB MJ-008",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Ink.copy(alpha = 0.55f),
+                    )
+                }
+                Switch(checked = demoMode, onCheckedChange = onDemoModeChange)
+            }
+
+            HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("Hardware MJ-008", style = MaterialTheme.typography.titleLarge, color = Accent)
             Text(hardwareStatus, style = MaterialTheme.typography.bodyMedium, color = Ink.copy(alpha = 0.65f))
             Button(
@@ -165,6 +194,7 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(4.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                enabled = !demoMode,
             ) { Text("Reconectar luces / USB") }
             if (hardwareDiagnostics.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
