@@ -618,7 +618,11 @@ fun CaptureScreen(
                                                     runCatching { controller.applyLightMode(mode) }
                                                 }
                                             }
-                                            delay(350)
+                                            // OEM settle: ~1.5s first / ~2s between shots
+                                            delay(
+                                                if (index == 0) LightMode.SETTLE_FIRST_MS
+                                                else LightMode.SETTLE_BETWEEN_MS,
+                                            )
                                             withContext(Dispatchers.IO) {
                                                 session.captureStill(oemFile)
                                             }
@@ -627,7 +631,10 @@ fun CaptureScreen(
                                             withContext(Dispatchers.IO) {
                                                 controller.applyLightMode(mode)
                                             }
-                                            delay(350)
+                                            delay(
+                                                if (index == 0) LightMode.SETTLE_FIRST_MS
+                                                else LightMode.SETTLE_BETWEEN_MS,
+                                            )
                                             takePicture(imageCapture, cameraExecutor, oemFile)
                                         }
                                     }

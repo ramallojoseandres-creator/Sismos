@@ -210,11 +210,12 @@ class Mj008UvcSession(
     }
 
     /**
-     * MJ-008 often never shows a USB dialog: permission was already granted once.
-     * In that case [USBMonitor.requestPermission] is a no-op UI-wise — we must [openDevice].
+     * MJ-008 / Miaojing OEM (`CameraSamplingActPresenter`):
+     * onAttach → filter USB3.0 / USB Camera → [USBMonitor.requestPermission] only.
+     * onConnect → open + startPreview → delay 1s → white light (`controlLed`).
      *
-     * Critical: [USBMonitor.openDevice] and [UVCCameraHandler.open] can block several
-     * seconds on MJ firmware. Always run them on [usbIo], never on the UI thread (ANR).
+     * We mirror requestPermission-first; if already granted and onConnect never
+     * fires (common on this tablet), fall back to [openDevice] on [usbIo].
      */
     private fun openOrRequest(device: UsbDevice) {
         val monitor = usbMonitor ?: return
@@ -228,21 +229,35 @@ class Mj008UvcSession(
         lastOpenAttemptMs = now
         val desc = UsbXuLightController.describe(device)
         try {
-            val granted = runCatching { monitor.hasPermission(device) }.getOrDefault(false) ||
-                systemHasPermission(device)
-            if (!granted) {
-                opening.set(false)
-                lastStatus = "UVC: pidiendo permiso USB ($desc). Si no sale diálogo, revise Ajustes→Apps→MLH→USB"
-                Log.i(TAG, lastStatus)
-                monitor.requestPermission(device)
-                return
-            }
-            lastStatus = "UVC: abriendo $desc (hilo USB, espere)…"
-            Log.i(TAG, lastStatus)
             if (ready.isCompleted && !isReady) {
                 ready = CompletableDeferred()
             }
-            usbIo.post {
+            val granted = runCatching { monitor.hasPermission(device) }.getOrDefault(false) ||
+                systemHasPermission(device)
+            lastStatus = if (granted) {
+                "UVC: permiso OK — requestPermission($desc) como OEM…"
+            } else {
+                "UVC: pidiendo permiso USB ($desc). Si no sale diálogo, revise Ajustes→Apps→MLH→USB"
+            }
+            Log.i(TAG, lastStatus)
+            // OEM path: always requestPermission; USBMonitor opens via onConnect.
+            runCatching { monitor.requestPermission(device) }
+
+            // Fallback if onConnect never arrives (already-granted / no dialog).
+            usbIo.postDelayed({
+                if (isReady || cameraHandler?.isOpened == true) {
+                    opening.set(false)
+                    return@postDelayed
+                }
+                if (!systemHasPermission(device) &&
+                    runCatching { monitor.hasPermission(device) }.getOrDefault(false).not()
+                ) {
+                    opening.set(false)
+                    lastStatus = "UVC: sin permiso USB para $desc"
+                    return@postDelayed
+                }
+                lastStatus = "UVC: sin onConnect — openDevice($desc) en hilo USB…"
+                Log.w(TAG, lastStatus)
                 val ctrl = try {
                     monitor.openDevice(device)
                 } catch (e: Exception) {
@@ -250,16 +265,13 @@ class Mj008UvcSession(
                     null
                 }
                 if (ctrl == null) {
-                    mainHandler.post {
-                        opening.set(false)
-                        lastStatus = "UVC: openDevice null — requestPermission($desc)"
-                        runCatching { monitor.requestPermission(device) }
-                    }
-                    return@post
+                    opening.set(false)
+                    lastStatus = "UVC: openDevice null — pulse Reintentar ($desc)"
+                } else {
+                    openPreviewOnUsbThread(device, ctrl)
                 }
-                openPreviewOnUsbThread(device, ctrl)
-            }
-            // Watchdog: if open never finishes, free the lock so Reintentar works.
+            }, 2_200L)
+
             usbIo.postDelayed({
                 if (opening.get() && !isReady) {
                     Log.w(TAG, "open watchdog — still not ready after 12s")
@@ -338,9 +350,10 @@ class Mj008UvcSession(
                 Log.i(TAG, lastStatus)
                 opening.set(false)
                 completeReady(true)
+                // OEM: sendEmptyMessageDelayed(1008, 1000) — “下发了白光指令”
                 mainHandler.postDelayed({
                     if (started.get()) runCatching { applyWhiteLight() }
-                }, 250)
+                }, LightMode.WHITE_LIGHT_DELAY_MS)
             }
         } catch (e: Exception) {
             opening.set(false)

@@ -6,6 +6,9 @@ package com.mlh.skinanalyzer.hardware
  * All 8 lights are physical USB-XU channels (`00 78 cmd FF`). Capture order
  * matches `CameraSamplingActPresenter` / `TypeUtils.getLightTypeNew`:
  * white → negative → positive → Wood's → UV → blue → orange → red.
+ *
+ * Timing mirrors OEM `CameraSamplingActPresenter`:
+ * white light ~1s after preview; ~2s settle between shots.
  */
 enum class LightMode(
     val id: Int,
@@ -30,6 +33,13 @@ enum class LightMode(
     companion object {
         val captureOrder = listOf(WHITE, XPL, PPL, WOODS, UV, BLUE, ORANGE, RED)
         val hardwareOrder = captureOrder
+
+        /** OEM: white light message 1008 delayed 1000ms after startPreview. */
+        const val WHITE_LIGHT_DELAY_MS = 1_000L
+        /** OEM SAMPLING_TIME_DELAY_FIRST_SHOOT. */
+        const val SETTLE_FIRST_MS = 1_500L
+        /** OEM SAMPLING_TIME_DELAY_AFTER_SHOOT between light change and next still. */
+        const val SETTLE_BETWEEN_MS = 2_000L
     }
 }
 
