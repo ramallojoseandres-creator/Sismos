@@ -21,14 +21,10 @@ object Mj008UsbDevices {
     }
 
     /**
-     * True only for the chin-rest analyzer camera (front USB3.0), not Dual-USB secondary.
+     * True for the chin-rest analyzer camera. Soft threshold — Dual USB secondary
+     * is rejected via negative scores / ILITEK exclude, not a hard 100 cutoff.
      */
-    fun isAnalyzerCamera(device: UsbDevice): Boolean {
-        if (isExcluded(device)) return false
-        val ranked = rankAnalyzerCamera(device)
-        // Exact MJ-008 analyzer or strong OEM naming — never a bare "has UVC" device.
-        return ranked.score >= 100
-    }
+    fun isAnalyzerCamera(device: UsbDevice): Boolean = isLikelyAnalyzerCamera(device)
 
     fun rankAnalyzerCamera(device: UsbDevice): RankedDevice {
         if (isExcluded(device)) {
@@ -103,15 +99,25 @@ object Mj008UsbDevices {
             .map { rankAnalyzerCamera(it) }
             .sortedByDescending { it.score }
         val best = ranked.firstOrNull() ?: return null
-        // Require analyzer signature (USB3.0 / known PID / strong name) — never random UVC.
-        if (best.score < 100) {
-            return ranked.firstOrNull { it.score >= 100 }
+        if (best.score >= 100) return best
+        // Single UVC device on the bus → that's the analyzer (even if name strings empty).
+        val videoOnly = ranked.filter { UsbXuLightController.hasVideoInterface(it.device) }
+        if (videoOnly.size == 1 && videoOnly.first().score >= 40) {
+            return videoOnly.first()
         }
-        return best
+        // Prefer highest UVC with score ≥ 80 (USB Camera / known PID without exact USB3.0 string).
+        return ranked.firstOrNull { it.score >= 80 && UsbXuLightController.hasVideoInterface(it.device) }
+            ?: ranked.firstOrNull { it.score >= 100 }
     }
 
     fun pickAnalyzerCameraOrNull(devices: Collection<UsbDevice>): UsbDevice? =
         pickAnalyzerCamera(devices)?.device
 
-    fun isLikelyAnalyzerCamera(device: UsbDevice): Boolean = isAnalyzerCamera(device)
+    fun isLikelyAnalyzerCamera(device: UsbDevice): Boolean {
+        if (isExcluded(device)) return false
+        val ranked = rankAnalyzerCamera(device)
+        return ranked.score >= 80 ||
+            (device.vendorId == Mj008Hardware.ANALYZER_USB_VENDOR_ID &&
+                device.productId == Mj008Hardware.ANALYZER_USB_PRODUCT_ID)
+    }
 }

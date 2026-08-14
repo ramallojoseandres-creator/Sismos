@@ -53,6 +53,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -123,7 +124,7 @@ fun CaptureScreen(
     val activity = context as? Activity
     var useUvc by remember { mutableStateOf(activity != null) }
     var uvcSession by remember { mutableStateOf<Mj008UvcSession?>(null) }
-    var uvcBound by remember { mutableStateOf(false) }
+    var uvcStartToken by remember { mutableIntStateOf(0) }
 
     var uvcLabel by remember { mutableStateOf("") }
     var uvcReady by remember { mutableStateOf(false) }
@@ -132,30 +133,12 @@ fun CaptureScreen(
         ActivityResultContracts.RequestPermission(),
     ) { granted ->
         hasCamPermission = granted
-        if (granted && !useUvc) {
-            scope.launch(Dispatchers.IO) {
-                runCatching {
-                    detection?.let { controller.setCameraVariant(it.cameraVariant) }
-                    controller.open()
-                    controller.setMultiMode()
-                    controller.applyLightMode(LightMode.WHITE)
-                }
-            }
-        }
     }
 
+    // CAMERA permission is for CameraX fallback only — UVC uses USB permission.
     LaunchedEffect(Unit) {
         if (!hasCamPermission) {
             permissionLauncher.launch(Manifest.permission.CAMERA)
-        } else if (!useUvc) {
-            withContext(Dispatchers.IO) {
-                runCatching {
-                    detection?.let { controller.setCameraVariant(it.cameraVariant) }
-                    controller.open()
-                    controller.setMultiMode()
-                    controller.applyLightMode(LightMode.WHITE)
-                }
-            }
         }
     }
 
@@ -163,11 +146,7 @@ fun CaptureScreen(
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var status by remember {
         mutableStateOf(
-            if (useUvc) {
-                "Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece."
-            } else {
-                "Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar."
-            },
+            "Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece.",
         )
     }
 
@@ -175,13 +154,12 @@ fun CaptureScreen(
         vm.markCaptureActive(true)
     }
 
-    LaunchedEffect(useUvc, hasCamPermission, activity) {
-        if (!useUvc || activity == null || !hasCamPermission) {
+    // Start UVC as soon as Captura opens — do not wait for CAMERA permission.
+    LaunchedEffect(useUvc, activity, uvcStartToken) {
+        if (!useUvc || activity == null) {
             uvcSession = null
-            uvcBound = false
             return@LaunchedEffect
         }
-        uvcBound = false
         uvcReady = false
         uvcLabel = "Preparando cámara USB3.0 del analizador…"
         runCatching {
@@ -189,6 +167,7 @@ fun CaptureScreen(
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
             uvcSession = session
             uvcLabel = session.statusLabel
+            Log.i("Capture", "UVC session prepared — waiting for TextureView bind")
         }.onFailure {
             Log.e("Capture", "prepareUvcSession failed", it)
             uvcLabel = "Error cámara: ${it.message}"
@@ -199,7 +178,7 @@ fun CaptureScreen(
         if (!useUvc) return@LaunchedEffect
         var lit = false
         while (true) {
-            uvcLabel = uvcSession?.statusLabel.orEmpty()
+            uvcLabel = uvcSession?.statusLabel.orEmpty().ifBlank { "UVC…" }
             val readyNow = uvcSession?.isReady == true
             uvcReady = readyNow
             if (readyNow && !lit) {
@@ -216,7 +195,6 @@ fun CaptureScreen(
             vm.markCaptureActive(false)
             vm.releaseUvcSession()
             uvcSession = null
-            uvcBound = false
             scope.launch(Dispatchers.IO) {
                 if (!useUvc) {
                     runCatching { controller.turnOff() }
@@ -282,24 +260,34 @@ fun CaptureScreen(
                 .border(1.dp, Ink.copy(alpha = 0.2f))
                 .background(Ink),
         ) {
-            if (hasCamPermission) {
-                if (useUvc && activity != null) {
-                    AndroidView(
-                        factory = { ctx -> UVCCameraTextureView(ctx) },
-                        update = { view ->
-                            val session = uvcSession ?: return@AndroidView
-                            if (uvcBound) return@AndroidView
-                            runCatching {
-                                session.bindPreview(view)
-                                session.start()
-                                uvcBound = true
-                            }.onFailure { e ->
-                                Log.e("Capture", "UVC bind/start failed", e)
-                                uvcLabel = "UVC error: ${e.message}"
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
+            if (useUvc && activity != null) {
+                    val session = uvcSession
+                    if (session != null) {
+                        key(session) {
+                            AndroidView(
+                                factory = { ctx ->
+                                    UVCCameraTextureView(ctx).also { view ->
+                                        try {
+                                            session.bindPreview(view)
+                                            session.start()
+                                            Log.i("Capture", "UVC bind+start OK")
+                                        } catch (e: Exception) {
+                                            Log.e("Capture", "UVC bind/start failed", e)
+                                            uvcLabel = "UVC error: ${e.message}"
+                                        }
+                                    }
+                                },
+                                modifier = Modifier.fillMaxSize(),
+                            )
+                        }
+                    } else {
+                        Box(
+                            Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            CircularProgressIndicator(color = Accent)
+                        }
+                    }
                     if (!uvcReady) {
                         Box(
                             Modifier
@@ -322,23 +310,13 @@ fun CaptureScreen(
                                 Spacer(Modifier.height(12.dp))
                                 Button(
                                     onClick = {
-                                        scope.launch {
-                                            uvcBound = false
-                                            vm.releaseUvcSession()
-                                            activity?.let { act ->
-                                                runCatching {
-                                                    val session = vm.prepareUvcSession(act)
-                                                    uvcSession = session
-                                                    // update{} will bind+start when session is set
-                                                }
-                                            }
-                                        }
+                                        uvcStartToken++
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara frontal USB3.0") }
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    "No use la cámara de la tablet — solo la USB3.0 del analizador enciende las luces.",
+                                    "Acepte el diálogo de permiso USB. Solo la USB3.0 del analizador enciende las luces.",
                                     color = Paper.copy(alpha = 0.75f),
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
@@ -346,7 +324,7 @@ fun CaptureScreen(
                             }
                         }
                     }
-                } else {
+                } else if (hasCamPermission) {
                     AndroidView(
                         factory = { ctx ->
                             val previewView = PreviewView(ctx).apply {
@@ -391,14 +369,13 @@ fun CaptureScreen(
                         },
                         modifier = Modifier.fillMaxSize(),
                     )
+                } else {
+                    Text(
+                        "Preparando vista de cámara…",
+                        color = Paper,
+                        modifier = Modifier.align(Alignment.Center),
+                    )
                 }
-            } else {
-                Text(
-                    "Se requiere permiso de cámara",
-                    color = Paper,
-                    modifier = Modifier.align(Alignment.Center),
-                )
-            }
             Box(
                 Modifier
                     .width(1.dp)
@@ -527,7 +504,7 @@ fun CaptureScreen(
                             }
                         }
                     },
-                    enabled = hasCamPermission && patient != null,
+                    enabled = patient != null && (useUvc || hasCamPermission),
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(52.dp),
