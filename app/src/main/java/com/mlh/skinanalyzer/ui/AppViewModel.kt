@@ -67,8 +67,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var searchQuery by mutableStateOf("")
         private set
+    /** Pre-loaded patient for Captura — avoids blank screen / failed navigation. */
+    var capturePatient by mutableStateOf<Patient?>(null)
+        private set
+    var userMessage by mutableStateOf<String?>(null)
+        private set
 
     val lightController = Mj008LightController(app)
+
+    fun clearUserMessage() {
+        userMessage = null
+    }
+
+    fun findPatientById(id: Long): Patient? = allPatients.find { it.id == id }
+
+    /** Resolve patient then invoke [onNavigate] on the main thread. */
+    fun openCapture(patientId: Long, onNavigate: (Long) -> Unit) {
+        if (patientId <= 0L) {
+            userMessage = "Paciente sin ID válido. Edite la ficha y guarde de nuevo."
+            Log.w("MLH", "openCapture rejected: invalid id=$patientId")
+            return
+        }
+        findPatientById(patientId)?.let { cached ->
+            capturePatient = cached
+            Log.i("MLH", "openCapture cached id=$patientId name=${cached.name}")
+            onNavigate(patientId)
+            return
+        }
+        viewModelScope.launch {
+            val fromDb = withContext(Dispatchers.IO) { patientsDao.getById(patientId) }
+            if (fromDb != null) {
+                capturePatient = fromDb
+                Log.i("MLH", "openCapture from DB id=$patientId")
+                onNavigate(patientId)
+            } else {
+                userMessage = "No se encontró el paciente (id=$patientId)."
+                Log.e("MLH", "openCapture: patient not found id=$patientId")
+            }
+        }
+    }
 
     init {
         viewModelScope.launch(Dispatchers.IO) {

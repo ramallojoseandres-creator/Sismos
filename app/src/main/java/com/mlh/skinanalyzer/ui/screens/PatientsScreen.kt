@@ -117,31 +117,42 @@ fun PatientsScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = Ink.copy(alpha = 0.65f),
                         )
-                        Spacer(Modifier.height(10.dp))
+                        Spacer(Modifier.height(12.dp))
+                        Button(
+                            onClick = { onAnalyze(p.id) },
+                            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                            shape = RoundedCornerShape(4.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(48.dp),
+                        ) {
+                            Icon(Icons.Outlined.Face, null)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Analizar")
+                        }
+                        Spacer(Modifier.height(8.dp))
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(4.dp),
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            IconButton(onClick = { onEdit(p.id) }) {
-                                Icon(Icons.Outlined.Edit, "Editar")
-                            }
                             OutlinedButton(
                                 onClick = { onOpen(p.id) },
                                 shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier.weight(1f),
                             ) {
                                 Icon(Icons.Outlined.History, null)
                                 Spacer(Modifier.width(4.dp))
                                 Text("Historial")
                             }
-                            Button(
-                                onClick = { onAnalyze(p.id) },
-                                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                            OutlinedButton(
+                                onClick = { onEdit(p.id) },
                                 shape = RoundedCornerShape(4.dp),
                                 modifier = Modifier.weight(1f),
                             ) {
-                                Icon(Icons.Outlined.Face, null)
+                                Icon(Icons.Outlined.Edit, null)
                                 Spacer(Modifier.width(4.dp))
-                                Text("Analizar")
+                                Text("Editar")
                             }
                             IconButton(onClick = { onDelete(p) }) {
                                 Icon(Icons.Outlined.Delete, "Eliminar")

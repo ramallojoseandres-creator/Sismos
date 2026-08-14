@@ -1,8 +1,13 @@
 package com.mlh.skinanalyzer.ui
 
+import android.util.Log
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -11,6 +16,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
+import androidx.navigation.navOptions
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -42,7 +49,23 @@ object Routes {
 @Composable
 fun AppNav(vm: AppViewModel = viewModel()) {
     val nav = rememberNavController()
-    NavHost(navController = nav, startDestination = Routes.HOME) {
+    val snackbar = remember { SnackbarHostState() }
+
+    LaunchedEffect(vm.userMessage) {
+        vm.userMessage?.let { msg ->
+            snackbar.showSnackbar(msg)
+            vm.clearUserMessage()
+        }
+    }
+
+    Scaffold(
+        snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(8.dp)) },
+    ) { padding ->
+    NavHost(
+        navController = nav,
+        startDestination = Routes.HOME,
+        modifier = Modifier.padding(padding),
+    ) {
         composable(Routes.HOME) {
             HomeScreen(
                 onNewAnalysis = { nav.navigate("patient_form?id=-1") },
@@ -76,7 +99,13 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onAdd = { nav.navigate("patient_form?id=-1") },
                 onOpen = { id -> nav.navigate("sessions/$id") },
                 onAnalyze = { id ->
-                    runCatching { nav.navigate("capture/$id") }
+                    vm.openCapture(id) { patientId ->
+                        Log.i("MLH", "navigate capture/$patientId from patients")
+                        nav.navigate(
+                            "capture/$patientId",
+                            navOptions { launchSingleTop = true },
+                        )
+                    }
                 },
                 onEdit = { id -> nav.navigate("patient_form?id=$id") },
                 onDelete = { vm.deletePatient(it) },
@@ -97,8 +126,11 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onSave = { patient, startCapture ->
                     vm.savePatient(patient) { newId ->
                         if (startCapture) {
-                            nav.navigate("capture/$newId") {
-                                popUpTo(Routes.HOME)
+                            vm.openCapture(newId) { id ->
+                                nav.navigate("capture/$id") {
+                                    popUpTo(Routes.HOME)
+                                    launchSingleTop = true
+                                }
                             }
                         } else {
                             nav.popBackStack()
@@ -112,11 +144,20 @@ fun AppNav(vm: AppViewModel = viewModel()) {
             arguments = listOf(navArgument("patientId") { type = NavType.LongType }),
         ) { entry ->
             val patientId = entry.arguments!!.getLong("patientId")
-            var patient by remember(patientId) { mutableStateOf<Patient?>(null) }
+            var patient by remember(patientId) {
+                mutableStateOf(
+                    vm.capturePatient?.takeIf { it.id == patientId }
+                        ?: vm.findPatientById(patientId),
+                )
+            }
             var loadFailed by remember(patientId) { mutableStateOf(false) }
             LaunchedEffect(patientId) {
-                // Always load from Room — do not depend on filtered patient list.
-                patient = vm.getPatient(patientId)
+                if (patient != null) return@LaunchedEffect
+                runCatching {
+                    patient = vm.getPatient(patientId)
+                }.onFailure {
+                    Log.e("MLH", "load patient for capture id=$patientId", it)
+                }
                 loadFailed = patient == null
             }
             when {
@@ -161,7 +202,14 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 vm = vm,
                 onBack = { nav.popBackStack() },
                 onOpen = { sid -> nav.navigate("report/$sid") },
-                onNew = { nav.navigate("capture/$patientId") },
+                onNew = {
+                    vm.openCapture(patientId) { id ->
+                        nav.navigate(
+                            "capture/$id",
+                            navOptions { launchSingleTop = true },
+                        )
+                    }
+                },
                 onCompare = { nav.navigate("compare/$patientId") },
                 onDelete = { vm.deleteSession(it) },
             )
@@ -177,5 +225,6 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onBack = { nav.popBackStack() },
             )
         }
+    }
     }
 }
