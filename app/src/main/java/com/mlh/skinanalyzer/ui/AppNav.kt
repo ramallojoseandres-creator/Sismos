@@ -21,6 +21,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.ui.screens.WelcomeScreen
 import com.mlh.skinanalyzer.ui.screens.CaptureScreen
 import com.mlh.skinanalyzer.ui.screens.CompareScreen
 import com.mlh.skinanalyzer.ui.screens.HomeScreen
@@ -31,6 +32,7 @@ import com.mlh.skinanalyzer.ui.screens.SessionListScreen
 import com.mlh.skinanalyzer.ui.screens.SettingsScreen
 
 object Routes {
+    const val WELCOME = "welcome"
     const val HOME = "home"
     const val PATIENTS = "patients"
     const val PATIENT_FORM = "patient_form?id={id}"
@@ -58,9 +60,20 @@ fun AppNav(vm: AppViewModel = viewModel()) {
     ) { padding ->
     NavHost(
         navController = nav,
-        startDestination = Routes.HOME,
+        startDestination = Routes.WELCOME,
         modifier = Modifier.padding(padding),
     ) {
+        composable(Routes.WELCOME) {
+            WelcomeScreen(
+                clinicName = vm.clinic.doctorName,
+                onContinue = {
+                    nav.navigate(Routes.HOME) {
+                        popUpTo(Routes.WELCOME) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                },
+            )
+        }
         composable(Routes.HOME) {
             HomeScreen(
                 onNewAnalysis = { nav.navigate("patient_form?id=-1") },

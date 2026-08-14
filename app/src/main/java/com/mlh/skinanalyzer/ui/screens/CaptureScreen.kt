@@ -250,6 +250,7 @@ fun CaptureScreen(
     val captured = remember { mutableStateMapOf<String, Pair<String, Bitmap?>>() }
     var currentIndex by remember { mutableIntStateOf(0) }
     var capturing by remember { mutableStateOf(false) }
+    var captureBanner by remember { mutableStateOf("") }
 
     val progress by animateFloatAsState(
         targetValue = captured.size / 8f,
@@ -415,6 +416,42 @@ fun CaptureScreen(
                         .size(72.dp),
                 )
             }
+
+            // OEM-style capture banner over the live preview
+            if (capturing && captureBanner.isNotBlank()) {
+                Box(
+                    Modifier
+                        .fillMaxSize()
+                        .background(Ink.copy(alpha = 0.55f)),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier
+                            .padding(24.dp)
+                            .background(Paper.copy(alpha = 0.95f), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 28.dp, vertical = 22.dp),
+                    ) {
+                        if (!captureBanner.contains("finalizado", ignoreCase = true)) {
+                            CircularProgressIndicator(color = Accent, modifier = Modifier.size(40.dp))
+                            Spacer(Modifier.height(16.dp))
+                        }
+                        Text(
+                            captureBanner,
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = Ink,
+                            textAlign = TextAlign.Center,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            status,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Ink.copy(alpha = 0.6f),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                }
+            }
         }
 
         Spacer(Modifier.height(10.dp))
@@ -452,13 +489,14 @@ fun CaptureScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     CircularProgressIndicator(modifier = Modifier.size(28.dp), color = Accent)
                     Spacer(Modifier.width(10.dp))
-                    Text("Capturando espectros…")
+                    Text(captureBanner.ifBlank { "Capturando, por favor espere…" })
                 }
             } else {
                 Button(
                     onClick = {
                         scope.launch {
                             capturing = true
+                            captureBanner = "Capturando, por favor espere…"
                             try {
                                 val sessionDir = File(
                                     context.filesDir,
@@ -467,13 +505,21 @@ fun CaptureScreen(
                                 if (useUvc && uvcSession != null) {
                                     if (!uvcSession!!.awaitReady()) {
                                         status = "Cámara del analizador no lista: ${uvcSession!!.statusLabel}. " +
-                                            "Pulse Reintentar o acepte permiso USB."
+                                            "Pulse Reintentar."
+                                        captureBanner = ""
                                         return@launch
                                     }
                                 }
+                                val total = LightMode.captureOrder.size
                                 for ((index, mode) in LightMode.captureOrder.withIndex()) {
                                     currentIndex = index
-                                    status = "Luz ${index + 1}/8: ${mode.displayName}"
+                                    val n = index + 1
+                                    captureBanner = if (n < total) {
+                                        "Capturando, por favor espere…"
+                                    } else {
+                                        "Capturando última imagen…"
+                                    }
+                                    status = "Foto $n/$total · ${mode.displayName}"
                                     val oemFile = File(sessionDir, OemCaptureFiles.filenameFor(mode))
                                     val bmp = if (useUvc && uvcSession != null) {
                                         val session = uvcSession!!
@@ -509,9 +555,14 @@ fun CaptureScreen(
                                     }
                                 }
                                 if (captured.isEmpty()) {
+                                    captureBanner = ""
                                     status = "Sin imágenes. Revisar cámara y permisos."
                                 } else {
-                                    status = "Captura completa. Analizando…"
+                                    captureBanner = "Escaneo finalizado"
+                                    status = "8 espectros listos"
+                                    delay(1200)
+                                    captureBanner = "Analizando, por favor espere…"
+                                    status = "Generando mapas e informe…"
                                     onFinished(
                                         captured.mapValues { it.value.first },
                                         moistureText.toFloatOrNull(),
@@ -519,10 +570,12 @@ fun CaptureScreen(
                                     )
                                 }
                             } catch (e: Exception) {
+                                captureBanner = ""
                                 status = "Error: ${e.message}"
                                 Log.e("Capture", "sequence failed", e)
                             } finally {
                                 capturing = false
+                                captureBanner = ""
                             }
                         }
                     },
