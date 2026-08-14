@@ -35,6 +35,13 @@ En muchos firmwares MJ-008, `/dev/ttyS4` solo lo escribe una app de sistema. Si 
 
 ## Compilar
 
+### En GitHub Actions (recomendado)
+Cada push/PR a esta rama dispara el workflow **Build MJ-008 APK**.
+El APK queda en la pestaña **Actions → artefacto** `MLH-Skin-Analyzer-Pro-MJ008-debug`.
+
+También puedes lanzarlo a mano: Actions → Build MJ-008 APK → Run workflow.
+
+### Local
 ```bash
 export ANDROID_HOME=$HOME/android-sdk
 ./gradlew :app:assembleDebug
