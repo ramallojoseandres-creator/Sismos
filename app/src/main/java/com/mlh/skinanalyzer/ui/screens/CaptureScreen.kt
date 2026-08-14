@@ -1,9 +1,11 @@
 package com.mlh.skinanalyzer.ui.screens
 
+import android.app.Activity
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.util.Log
+import android.util.Size
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -63,10 +65,13 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.hardware.Mj008UvcSession
 import com.mlh.skinanalyzer.hardware.LightController
 import com.mlh.skinanalyzer.hardware.LightMode
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
+import com.serenegiant.widget.UVCCameraTextureView
 import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
 import com.mlh.skinanalyzer.ui.theme.Ink
@@ -86,7 +91,7 @@ fun CaptureScreen(
     patient: Patient?,
     controller: LightController,
     onBack: () -> Unit,
-    onFinished: (Map<String, String>, Float?) -> Unit,
+    onFinished: (Map<String, String>, Float?, String) -> Unit,
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -103,26 +108,49 @@ fun CaptureScreen(
         ActivityResultContracts.RequestPermission(),
     ) { hasCamPermission = it }
 
+    val activity = context as? Activity
+    val useUvc = remember(activity) {
+        activity != null && Mj008UvcSession.isSupported(activity)
+    }
+    val uvcSession = remember(activity) {
+        activity?.let { Mj008UvcSession(it) }
+    }
+
     LaunchedEffect(Unit) {
         if (!hasCamPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
         withContext(Dispatchers.IO) {
             runCatching {
-                detection?.let { controller.setCameraVariant(it.cameraVariant) }
-                controller.open()
-                controller.setMultiMode()
-                controller.applyLightMode(LightMode.WHITE)
+                if (useUvc) {
+                    uvcSession?.start()
+                } else {
+                    detection?.let { controller.setCameraVariant(it.cameraVariant) }
+                    controller.open()
+                    controller.setMultiMode()
+                    controller.applyLightMode(LightMode.WHITE)
+                }
             }
         }
     }
-    DisposableEffect(Unit) {
+    DisposableEffect(useUvc) {
         onDispose {
             scope.launch(Dispatchers.IO) {
-                runCatching { controller.turnOff() }
+                if (useUvc) {
+                    runCatching { uvcSession?.release() }
+                } else {
+                    runCatching { controller.turnOff() }
+                }
             }
         }
     }
 
-    val imageCapture = remember { ImageCapture.Builder().build() }
+    val imageCapture = remember {
+        ImageCapture.Builder()
+            .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
+            .setTargetResolution(
+                Size(Mj008Hardware.PREVIEW_WIDTH, Mj008Hardware.PREVIEW_HEIGHT),
+            )
+            .build()
+    }
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
     DisposableEffect(Unit) {
         onDispose { cameraExecutor.shutdown() }
@@ -178,50 +206,62 @@ fun CaptureScreen(
                 .background(Ink),
         ) {
             if (hasCamPermission) {
-                AndroidView(
-                    factory = { ctx ->
-                        val previewView = PreviewView(ctx).apply {
-                            layoutParams = ViewGroup.LayoutParams(
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                                ViewGroup.LayoutParams.MATCH_PARENT,
-                            )
-                            scaleType = PreviewView.ScaleType.FILL_CENTER
-                        }
-                        val providerFuture = ProcessCameraProvider.getInstance(ctx)
-                        providerFuture.addListener({
-                            try {
-                                val provider = providerFuture.get()
-                                val preview = Preview.Builder().build()
-                                preview.setSurfaceProvider(previewView.surfaceProvider)
-                                provider.unbindAll()
-                                val selectors = listOf(
-                                    CameraSelector.DEFAULT_BACK_CAMERA,
-                                    CameraSelector.DEFAULT_FRONT_CAMERA,
-                                )
-                                var bound = false
-                                for (selector in selectors) {
-                                    try {
-                                        provider.bindToLifecycle(
-                                            lifecycleOwner,
-                                            selector,
-                                            preview,
-                                            imageCapture,
-                                        )
-                                        bound = true
-                                        break
-                                    } catch (e: Exception) {
-                                        Log.w("Capture", "bind failed for selector", e)
-                                    }
-                                }
-                                if (!bound) Log.e("Capture", "No camera could be bound")
-                            } catch (e: Exception) {
-                                Log.e("Capture", "camera provider error", e)
+                if (useUvc && uvcSession != null) {
+                    AndroidView(
+                        factory = { ctx ->
+                            UVCCameraTextureView(ctx).also { view ->
+                                uvcSession.bindPreview(view)
+                                uvcSession.start()
                             }
-                        }, ContextCompat.getMainExecutor(ctx))
-                        previewView
-                    },
-                    modifier = Modifier.fillMaxSize(),
-                )
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                } else {
+                    AndroidView(
+                        factory = { ctx ->
+                            val previewView = PreviewView(ctx).apply {
+                                layoutParams = ViewGroup.LayoutParams(
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                    ViewGroup.LayoutParams.MATCH_PARENT,
+                                )
+                                scaleType = PreviewView.ScaleType.FILL_CENTER
+                            }
+                            val providerFuture = ProcessCameraProvider.getInstance(ctx)
+                            providerFuture.addListener({
+                                try {
+                                    val provider = providerFuture.get()
+                                    val preview = Preview.Builder().build()
+                                    preview.setSurfaceProvider(previewView.surfaceProvider)
+                                    provider.unbindAll()
+                                    val selectors = listOf(
+                                        CameraSelector.DEFAULT_BACK_CAMERA,
+                                        CameraSelector.DEFAULT_FRONT_CAMERA,
+                                    )
+                                    var bound = false
+                                    for (selector in selectors) {
+                                        try {
+                                            provider.bindToLifecycle(
+                                                lifecycleOwner,
+                                                selector,
+                                                preview,
+                                                imageCapture,
+                                            )
+                                            bound = true
+                                            break
+                                        } catch (e: Exception) {
+                                            Log.w("Capture", "bind failed for selector", e)
+                                        }
+                                    }
+                                    if (!bound) Log.e("Capture", "No camera could be bound")
+                                } catch (e: Exception) {
+                                    Log.e("Capture", "camera provider error", e)
+                                }
+                            }, ContextCompat.getMainExecutor(ctx))
+                            previewView
+                        },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
             } else {
                 Text(
                     "Se requiere permiso de cámara",
@@ -262,10 +302,10 @@ fun CaptureScreen(
                 color = Accent,
             )
             Text(
-                if (controller.isOpen) {
-                    "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
-                } else {
-                    "MJ-008 LED: no disponible — captura igual"
+                when {
+                    useUvc -> uvcSession?.statusLabel ?: "UVC MJ-008"
+                    controller.isOpen -> "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
+                    else -> "MJ-008 LED: no disponible — captura igual"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),
@@ -290,29 +330,58 @@ fun CaptureScreen(
                         scope.launch {
                             capturing = true
                             try {
-                                val dir = File(context.cacheDir, "captures").apply { mkdirs() }
+                                val sessionDir = File(
+                                    context.cacheDir,
+                                    "capture_${System.currentTimeMillis()}",
+                                ).apply { mkdirs() }
+                                if (useUvc && uvcSession != null) {
+                                    if (!uvcSession.awaitReady()) {
+                                        status = "Cámara UVC MJ-008 no conectada. Revise USB."
+                                        return@launch
+                                    }
+                                }
                                 for ((index, mode) in LightMode.captureOrder.withIndex()) {
                                     currentIndex = index
                                     status = "Luz ${index + 1}/8: ${mode.displayName}"
-                                    withContext(Dispatchers.IO) {
-                                        controller.applyLightMode(mode)
+                                    val oemFile = File(sessionDir, OemCaptureFiles.filenameFor(mode))
+                                    val bmp = if (useUvc && uvcSession != null) {
+                                        withContext(Dispatchers.IO) {
+                                            uvcSession.applyLightMode(mode)
+                                        }
+                                        delay(350)
+                                        withContext(Dispatchers.IO) {
+                                            uvcSession.captureStill(oemFile)
+                                        }
+                                    } else {
+                                        withContext(Dispatchers.IO) {
+                                            controller.applyLightMode(mode)
+                                        }
+                                        delay(350)
+                                        takePicture(imageCapture, cameraExecutor, oemFile)
                                     }
-                                    delay(350)
-                                    val file = File(dir, "${mode.shortName}_${System.currentTimeMillis()}.jpg")
-                                    val bmp = takePicture(imageCapture, cameraExecutor, file)
-                                    if (bmp != null || file.exists()) {
-                                        captured[mode.shortName] = file.absolutePath to bmp
+                                    if (bmp != null || oemFile.exists()) {
+                                        captured[mode.shortName] = oemFile.absolutePath to bmp
                                         previewBitmap = bmp
                                     } else {
                                         status = "No se pudo capturar ${mode.shortName}"
                                     }
                                 }
-                                withContext(Dispatchers.IO) { runCatching { controller.turnOff() } }
+                                withContext(Dispatchers.IO) {
+                                    if (useUvc) {
+                                        runCatching { uvcSession?.turnOff() }
+                                    } else {
+                                        runCatching { controller.turnOff() }
+                                    }
+                                }
                                 if (captured.isEmpty()) {
                                     status = "Sin imágenes. Revisar cámara y permisos."
                                 } else {
                                     status = "Captura completa. Analizando…"
-                                    onFinished(captured.mapValues { it.value.first }, moistureText.toFloatOrNull())
+                                    onFinished(
+                                        captured.mapValues { it.value.first },
+                                        moistureText.toFloatOrNull(),
+                                        sessionDir.absolutePath,
+                                    )
                                 }
                             } catch (e: Exception) {
                                 status = "Error: ${e.message}"

@@ -31,6 +31,9 @@ data class AnalysisSession(
     val moisturePercent: Float? = null,
     /** Offline facial proportions (3 courts / 5 eyes) JSON. */
     val facialRatioJson: String = "",
+    /** OEM native indicator overlays + scores JSON. */
+    val oemIndicatorsJson: String = "",
+    val sessionDir: String = "",
     val notes: String = "",
 )
 

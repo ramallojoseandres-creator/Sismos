@@ -94,8 +94,8 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 patient = patient,
                 controller = vm.lightController,
                 onBack = { nav.popBackStack() },
-                onFinished = { paths, moisture ->
-                    vm.runAnalysis(patientId, paths, moisture) { sessionId ->
+                onFinished = { paths, moisture, sessionDir ->
+                    vm.runAnalysis(patientId, paths, moisture, sessionDir) { sessionId ->
                         nav.navigate("report/$sessionId") {
                             popUpTo(Routes.HOME)
                         }

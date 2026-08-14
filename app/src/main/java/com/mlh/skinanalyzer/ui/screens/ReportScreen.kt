@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
+import com.mlh.skinanalyzer.analysis.oem.OemIndicatorResult
 import com.mlh.skinanalyzer.analysis.SkinMetric
 import com.mlh.skinanalyzer.data.AnalysisSession
 import com.mlh.skinanalyzer.data.Patient
@@ -81,6 +82,8 @@ fun ReportScreen(
     var tab by remember { mutableIntStateOf(0) }
     var guides by remember { mutableStateOf<List<com.mlh.skinanalyzer.data.CareGuide>>(emptyList()) }
     var products by remember { mutableStateOf<List<com.mlh.skinanalyzer.data.ProductRec>>(emptyList()) }
+    var oemIndicators by remember { mutableStateOf<List<OemIndicatorResult>>(emptyList()) }
+    var selectedMapIndex by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(sessionId) {
         val s = vm.getSession(sessionId) ?: return@LaunchedEffect
@@ -93,6 +96,10 @@ fun ReportScreen(
             val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
             Gson().fromJson<Map<String, String>>(s.imagePathsJson, type) ?: emptyMap()
         }.getOrDefault(emptyMap())
+        oemIndicators = runCatching {
+            val type = object : com.google.gson.reflect.TypeToken<List<OemIndicatorResult>>() {}.type
+            Gson().fromJson<List<OemIndicatorResult>>(s.oemIndicatorsJson, type) ?: emptyList()
+        }.getOrDefault(emptyList())
         val keys = result?.priorityKeys.orEmpty().ifEmpty {
             result?.metrics?.sortedByDescending { it.score }?.take(3)?.map { it.key }.orEmpty()
         }
@@ -188,7 +195,7 @@ fun ReportScreen(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("Resumen", "Superficial", "Profunda", "3/5 ojos", "Cuidado").forEachIndexed { i, label ->
+            listOf("Resumen", "Superficial", "Profunda", "3/5 ojos", "Mapas OEM", "Cuidado").forEachIndexed { i, label ->
                 val selected = tab == i
                 Button(
                     onClick = { tab = i },
@@ -285,6 +292,7 @@ fun ReportScreen(
                         }
                     }
                 }
+                4 -> OemMapViewer(oemIndicators, selectedMapIndex) { selectedMapIndex = it }
                 else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item {
                         Text("Guías de cuidado (catálogo local)", style = MaterialTheme.typography.titleLarge)
@@ -329,6 +337,74 @@ fun ReportScreen(
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun OemMapViewer(
+    indicators: List<OemIndicatorResult>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+) {
+    if (indicators.isEmpty()) {
+        Text(
+            "Mapas OEM no disponibles (análisis heurístico de respaldo).",
+            color = Ink.copy(alpha = 0.55f),
+        )
+        return
+    }
+    var layerMode by remember { mutableIntStateOf(0) } // 0=superficial, 1=profunda
+    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        items(indicators.size) { i ->
+            val ind = indicators[i]
+            val isSel = i == selected
+            Button(
+                onClick = { onSelect(i) },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isSel) Accent else Cream,
+                    contentColor = if (isSel) Color.White else Ink,
+                ),
+                shape = RoundedCornerShape(4.dp),
+            ) { Text(ind.displayName, maxLines = 1) }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        listOf("Capa superficial", "Capa profunda").forEachIndexed { i, label ->
+            val sel = layerMode == i
+            Button(
+                onClick = { layerMode = i },
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (sel) Accent else Cream,
+                    contentColor = if (sel) Color.White else Ink,
+                ),
+                shape = RoundedCornerShape(4.dp),
+            ) { Text(label) }
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    val ind = indicators.getOrNull(selected) ?: return
+    Text(
+        "${ind.displayName} · score ${ind.score} · nivel ${ind.levelLabel} · ${ind.layer}",
+        style = MaterialTheme.typography.titleLarge,
+    )
+    Spacer(Modifier.height(8.dp))
+    val path = when (layerMode) {
+        0 -> ind.overlayPath ?: ind.blackOverlayPath
+        else -> ind.blackOverlayPath ?: ind.overlayPath
+    }
+    val bmp = remember(path) { path?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() } }
+    if (bmp != null) {
+        Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = ind.displayName,
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(280.dp)
+                .background(Ink),
+        )
+    } else {
+        Text("Mapa no generado en disco.", color = Ink.copy(alpha = 0.5f))
     }
 }
 

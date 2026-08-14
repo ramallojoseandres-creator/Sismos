@@ -15,6 +15,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.FacialProportionAnalyzer
+import com.mlh.skinanalyzer.analysis.oem.OemAnalysisBundle
+import com.mlh.skinanalyzer.analysis.oem.OemSkinEngine
 import com.mlh.skinanalyzer.analysis.ReportGenerator
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
 import com.mlh.skinanalyzer.analysis.SkinAnalyzer
@@ -197,46 +199,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         patientId: Long,
         imagePaths: Map<String, String>,
         moisture: Float?,
+        sessionDir: String,
         onDone: (Long) -> Unit,
     ) {
         viewModelScope.launch {
             analyzing = true
+            val oemEngine = OemSkinEngine(getApplication())
             try {
                 val patient = withContext(Dispatchers.IO) { patientsDao.getById(patientId) } ?: return@launch
-                val bitmaps = withContext(Dispatchers.IO) {
-                    val map = LinkedHashMap<String, Bitmap>()
-                    imagePaths.forEach { (key, path) ->
-                        decodeBitmap(path)?.let { map[key] = it }
+                var oemBundle: OemAnalysisBundle? = null
+                var result: SkinAnalysisResult
+                val pathsOut: Map<String, String>
+
+                if (oemEngine.canAnalyze(sessionDir)) {
+                    oemBundle = withContext(Dispatchers.Default) {
+                        oemEngine.analyze(sessionDir, patient.age)
                     }
-                    val derived = SkinAnalyzer.deriveSpectralMaps(
-                        white = map["White"],
-                        uv = map["UV"],
-                        woods = map["Wood's"],
-                    )
-                    map["Orange"]?.let { map.putIfAbsent("Brown", it) }
-                    map["Brown"]?.let { map.putIfAbsent("Orange", it) }
-                    derived.forEach { (k, bmp) ->
-                        if (!map.containsKey(k)) map[k] = bmp
-                    }
-                    map to imagePaths.toMutableMap().also { m ->
-                        derived.forEach { (k, bmp) ->
-                            if (!m.containsKey(k)) {
-                                val out = File(
-                                    getApplication<Application>().cacheDir,
-                                    "derived_${k}_${System.currentTimeMillis()}.jpg",
-                                )
-                                out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-                                m[k] = out.absolutePath
-                            }
+                }
+                if (oemBundle != null) {
+                    result = filterMetrics(oemEngine.toSkinAnalysisResult(oemBundle, patient.age))
+                    pathsOut = imagePaths
+                } else {
+                    val bitmaps = withContext(Dispatchers.IO) {
+                        val map = LinkedHashMap<String, Bitmap>()
+                        imagePaths.forEach { (key, path) ->
+                            decodeBitmap(path)?.let { map[key] = it }
                         }
-                        m["Orange"]?.let { m.putIfAbsent("Brown", it) }
-                        m["Brown"]?.let { m.putIfAbsent("Orange", it) }
+                        val derived = SkinAnalyzer.deriveSpectralMaps(
+                            white = map["White"],
+                            uv = map["UV"],
+                            woods = map["Wood's"],
+                        )
+                        map["Orange"]?.let { map.putIfAbsent("Brown", it) }
+                        map["Brown"]?.let { map.putIfAbsent("Orange", it) }
+                        derived.forEach { (k, bmp) ->
+                            if (!map.containsKey(k)) map[k] = bmp
+                        }
+                        map to imagePaths.toMutableMap().also { m ->
+                            derived.forEach { (k, bmp) ->
+                                if (!m.containsKey(k)) {
+                                    val out = File(
+                                        getApplication<Application>().cacheDir,
+                                        "derived_${k}_${System.currentTimeMillis()}.jpg",
+                                    )
+                                    out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                                    m[k] = out.absolutePath
+                                }
+                            }
+                            m["Orange"]?.let { m.putIfAbsent("Brown", it) }
+                            m["Brown"]?.let { m.putIfAbsent("Orange", it) }
+                        }
                     }
+                    result = filterMetrics(
+                        withContext(Dispatchers.Default) {
+                            SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
+                        },
+                    )
+                    pathsOut = bitmaps.second
                 }
-                val raw = withContext(Dispatchers.Default) {
-                    SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
-                }
-                val result = filterMetrics(raw)
+
                 lastResult = result
                 val session = AnalysisSession(
                     patientId = patientId,
@@ -244,19 +265,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     skinAge = result.skinAge,
                     overview = result.overview,
                     metricsJson = gson.toJson(result),
-                    imagePathsJson = gson.toJson(bitmaps.second),
+                    imagePathsJson = gson.toJson(pathsOut),
                     recommendations = result.metrics
                         .sortedByDescending { it.score }
                         .take(3)
                         .joinToString("\n") { "• ${it.name}: ${it.recommendation}" },
                     moisturePercent = moisture,
-                    facialRatioJson = gson.toJson(
-                        result.facial ?: FacialProportionAnalyzer.analyze(bitmaps.first["White"]),
-                    ),
+                    facialRatioJson = oemBundle?.facialRatioJson?.takeIf { it.isNotBlank() }
+                        ?: gson.toJson(
+                            result.facial ?: FacialProportionAnalyzer.analyze(
+                                decodeBitmap(imagePaths["White"] ?: imagePaths.values.firstOrNull().orEmpty()),
+                            ),
+                        ),
+                    oemIndicatorsJson = oemBundle?.let { gson.toJson(it.indicators) } ?: "",
+                    sessionDir = sessionDir,
                 )
                 val sid = withContext(Dispatchers.IO) { sessionsDao.insert(session) }
                 onDone(sid)
             } finally {
+                oemEngine.close()
                 analyzing = false
             }
         }

@@ -58,6 +58,9 @@ interface SessionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(session: AnalysisSession): Long
 
+    @Query("UPDATE analysis_sessions SET oemIndicatorsJson = :json WHERE id = :id")
+    suspend fun updateOemIndicators(id: Long, json: String)
+
     @Delete
     suspend fun delete(session: AnalysisSession)
 }
