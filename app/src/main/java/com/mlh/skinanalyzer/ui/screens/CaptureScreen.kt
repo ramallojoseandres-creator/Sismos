@@ -154,7 +154,7 @@ fun CaptureScreen(
     var moistureText by remember { mutableStateOf("") }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
     var status by remember {
-        mutableStateOf("Coloque el mentón, cierre los ojos. Acepte el permiso USB si aparece.")
+        mutableStateOf("Coloque el mentón y cierre los ojos. La cámara USB se abre sola (el diálogo USB a menudo no aparece).")
     }
 
     LaunchedEffect(Unit) { vm.markCaptureActive(true) }
@@ -336,7 +336,9 @@ fun CaptureScreen(
                                 ) { Text("Reintentar cámara frontal USB3.0") }
                                 Spacer(Modifier.height(8.dp))
                                 Text(
-                                    "Acepte el diálogo de permiso USB. Debe ver v${BuildConfig.VERSION_NAME} arriba.",
+                                    "No hace falta permiso de cámara de Android. " +
+                                        "Si no sale diálogo USB, es normal: el permiso ya está concedido y la app abre sola. " +
+                                        "v${BuildConfig.VERSION_NAME}",
                                     color = Paper.copy(alpha = 0.75f),
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,

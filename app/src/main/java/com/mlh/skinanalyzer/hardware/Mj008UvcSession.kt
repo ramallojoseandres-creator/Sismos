@@ -1,9 +1,11 @@
 package com.mlh.skinanalyzer.hardware
 
 import android.app.Activity
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.hardware.usb.UsbDevice
+import android.hardware.usb.UsbManager
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
@@ -20,7 +22,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 /**
  * OEM UVC camera session for MJ-008 (1600×1200 @ 0° front) using Miaojing serenegiant stack.
- * Opens only the analyzer USB3.0 cam and drives LEDs via controlLed on the same connection.
+ * Opens analyzer USB3.0 cam; if USB permission was already granted (no dialog), opens directly.
  */
 class Mj008UvcSession(
     private val activity: Activity,
@@ -57,9 +59,7 @@ class Mj008UvcSession(
                 Log.d(TAG, "Ignorando USB (no analizador): ${UsbXuLightController.describe(device)}")
                 return
             }
-            lastStatus = "UVC: permiso USB ${UsbXuLightController.describe(device)}"
-            Log.i(TAG, lastStatus)
-            usbMonitor?.requestPermission(device)
+            openOrRequest(device)
         }
 
         override fun onConnect(
@@ -67,49 +67,7 @@ class Mj008UvcSession(
             ctrlBlock: USBMonitor.UsbControlBlock?,
             createNew: Boolean,
         ) {
-            val handler = cameraHandler ?: return
-            val view = previewView ?: return
-            if (ctrlBlock == null || device == null) return
-            // Dual USB: never open the secondary cam even if it somehow got permission.
-            if (!Mj008UsbDevices.isAnalyzerCamera(device)) {
-                lastStatus = "UVC: rechazada secundaria ${UsbXuLightController.describe(device)}"
-                Log.w(TAG, lastStatus)
-                runCatching { ctrlBlock.close() }
-                return
-            }
-            try {
-                if (handler.isOpened) {
-                    runCatching { handler.close() }
-                }
-                handler.open(ctrlBlock)
-                openedDevice.set(device)
-                val tex = view.surfaceTexture
-                if (tex != null) {
-                    previewSurface?.release()
-                    previewSurface = Surface(tex)
-                    handler.startPreview(previewSurface)
-                } else {
-                    mainHandler.postDelayed({
-                        runCatching {
-                            val t = view.surfaceTexture ?: return@runCatching
-                            previewSurface?.release()
-                            previewSurface = Surface(t)
-                            handler.startPreview(previewSurface)
-                        }
-                    }, 400)
-                }
-                lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
-                Log.i(TAG, lastStatus)
-                // OEM turns white LEDs on as soon as the analyzer cam opens.
-                mainHandler.postDelayed({
-                    runCatching { applyWhiteLight() }
-                }, 200)
-                completeReady(true)
-            } catch (e: Exception) {
-                lastStatus = "UVC error: ${e.message}"
-                Log.e(TAG, "UVC connect failed", e)
-                completeReady(false)
-            }
+            openPreview(device, ctrlBlock)
         }
 
         override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
@@ -127,7 +85,7 @@ class Mj008UvcSession(
         }
 
         override fun onCancel(device: UsbDevice?) {
-            lastStatus = "UVC: permiso USB denegado — acepte el diálogo"
+            lastStatus = "UVC: permiso USB denegado en el sistema"
             Log.w(TAG, lastStatus)
             completeReady(false)
         }
@@ -160,9 +118,10 @@ class Mj008UvcSession(
         }
         previewView?.onResume()
         usbMonitor?.register()
-        mainHandler.postDelayed({ probeAttachedDevices() }, 300)
-        mainHandler.postDelayed({ probeAttachedDevices() }, 1500)
-        mainHandler.postDelayed({ probeAttachedDevices() }, 3500)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 200)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 1000)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 2500)
+        mainHandler.postDelayed({ probeAttachedDevices() }, 5000)
     }
 
     fun retryConnect() {
@@ -176,31 +135,130 @@ class Mj008UvcSession(
     private fun probeAttachedDevices() {
         val monitor = usbMonitor ?: return
         try {
-            val list = monitor.deviceList
+            // Merge USBMonitor list + Android UsbManager (some MJ firmwares only fill one).
+            val fromMonitor = runCatching { monitor.deviceList }.getOrDefault(emptyList())
+            val fromSystem = systemUsbDevices()
+            val merged = LinkedHashMap<String, UsbDevice>()
+            (fromMonitor + fromSystem).forEach { d ->
+                merged["${d.vendorId}:${d.productId}:${d.deviceName}"] = d
+            }
+            val list = merged.values.toList()
             val ranked = list.map { Mj008UsbDevices.rankAnalyzerCamera(it) }
                 .sortedByDescending { it.score }
             Log.i(
                 TAG,
-                "USB detectados=${list.size} → ${ranked.joinToString {
+                "USB monitor=${fromMonitor.size} system=${fromSystem.size} → ${ranked.joinToString {
                     "${UsbXuLightController.describe(it.device)} score=${it.score} (${it.reason})"
                 }}",
             )
             if (list.isEmpty()) {
-                lastStatus = "UVC: sin USB — revise cable interno del analizador"
+                lastStatus = "UVC: 0 dispositivos USB — cable interno / Dual USB camera"
                 return
             }
             val pick = Mj008UsbDevices.pickAnalyzerCamera(list)
-            if (pick != null) {
-                lastStatus = "UVC: abriendo frontal ${UsbXuLightController.describe(pick.device)}"
-                monitor.requestPermission(pick.device)
+            if (pick == null) {
+                lastStatus = "UVC: ${list.size} USB pero ninguno es analizador. " +
+                    ranked.take(3).joinToString { "${it.device.productName}:s=${it.score}" }
                 return
             }
-            lastStatus = "UVC: no hay USB3.0 analizador (hay ${list.size} USB, ninguno score≥100). " +
-                "Revise Dual USB camera / Force USB front camera."
+            openOrRequest(pick.device)
         } catch (e: Exception) {
             Log.e(TAG, "probeAttachedDevices", e)
             lastStatus = "UVC probe: ${e.message}"
         }
+    }
+
+    /**
+     * MJ-008 often never shows a USB dialog: permission was already granted once.
+     * In that case [USBMonitor.requestPermission] is a no-op UI-wise — we must [openDevice].
+     */
+    private fun openOrRequest(device: UsbDevice) {
+        val monitor = usbMonitor ?: return
+        val desc = UsbXuLightController.describe(device)
+        try {
+            val granted = runCatching { monitor.hasPermission(device) }.getOrDefault(false) ||
+                systemHasPermission(device)
+            if (granted) {
+                lastStatus = "UVC: permiso USB ya OK — abriendo $desc"
+                Log.i(TAG, lastStatus)
+                val ctrl = runCatching { monitor.openDevice(device) }.getOrNull()
+                if (ctrl != null) {
+                    openPreview(device, ctrl)
+                } else {
+                    // Fallback: requestPermission often triggers onConnect when already granted.
+                    lastStatus = "UVC: openDevice null — requestPermission($desc)"
+                    monitor.requestPermission(device)
+                }
+            } else {
+                lastStatus = "UVC: pidiendo permiso USB ($desc). Si no sale diálogo, revise Ajustes→Apps→MLH→USB"
+                Log.i(TAG, lastStatus)
+                monitor.requestPermission(device)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "openOrRequest", e)
+            lastStatus = "UVC open: ${e.message}"
+        }
+    }
+
+    private fun openPreview(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
+        val handler = cameraHandler ?: run {
+            lastStatus = "UVC: sin handler (vista no lista)"
+            return
+        }
+        val view = previewView ?: run {
+            lastStatus = "UVC: sin TextureView"
+            return
+        }
+        if (ctrlBlock == null || device == null) return
+        if (!Mj008UsbDevices.isAnalyzerCamera(device)) {
+            lastStatus = "UVC: rechazada secundaria ${UsbXuLightController.describe(device)}"
+            Log.w(TAG, lastStatus)
+            runCatching { ctrlBlock.close() }
+            return
+        }
+        try {
+            if (handler.isOpened) {
+                runCatching { handler.close() }
+            }
+            handler.open(ctrlBlock)
+            openedDevice.set(device)
+            fun startSurface() {
+                val tex = view.surfaceTexture ?: return
+                previewSurface?.release()
+                previewSurface = Surface(tex)
+                handler.startPreview(previewSurface)
+            }
+            if (view.surfaceTexture != null) {
+                startSurface()
+            } else {
+                mainHandler.postDelayed({ startSurface() }, 300)
+                mainHandler.postDelayed({ startSurface() }, 800)
+            }
+            lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
+            Log.i(TAG, lastStatus)
+            mainHandler.postDelayed({ runCatching { applyWhiteLight() } }, 250)
+            completeReady(true)
+        } catch (e: Exception) {
+            lastStatus = "UVC error: ${e.message}"
+            Log.e(TAG, "UVC connect failed", e)
+            completeReady(false)
+        }
+    }
+
+    private fun systemUsbDevices(): List<UsbDevice> = try {
+        val mgr = activity.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return emptyList()
+        mgr.deviceList.values.toList()
+    } catch (_: Exception) {
+        emptyList()
+    }
+
+    private fun systemHasPermission(device: UsbDevice): Boolean = try {
+        val mgr = activity.getSystemService(Context.USB_SERVICE) as? UsbManager
+            ?: return false
+        mgr.hasPermission(device)
+    } catch (_: Exception) {
+        false
     }
 
     fun stop() {
