@@ -1,12 +1,23 @@
 package com.mlh.skinanalyzer.ui
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
+import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.ui.screens.CaptureScreen
 import com.mlh.skinanalyzer.ui.screens.CompareScreen
 import com.mlh.skinanalyzer.ui.screens.HomeScreen
@@ -15,6 +26,7 @@ import com.mlh.skinanalyzer.ui.screens.PatientsScreen
 import com.mlh.skinanalyzer.ui.screens.ReportScreen
 import com.mlh.skinanalyzer.ui.screens.SessionListScreen
 import com.mlh.skinanalyzer.ui.screens.SettingsScreen
+import com.mlh.skinanalyzer.ui.theme.Accent
 
 object Routes {
     const val HOME = "home"
@@ -63,7 +75,9 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onBack = { nav.popBackStack() },
                 onAdd = { nav.navigate("patient_form?id=-1") },
                 onOpen = { id -> nav.navigate("sessions/$id") },
-                onAnalyze = { id -> nav.navigate("capture/$id") },
+                onAnalyze = { id ->
+                    runCatching { nav.navigate("capture/$id") }
+                },
                 onEdit = { id -> nav.navigate("patient_form?id=$id") },
                 onDelete = { vm.deletePatient(it) },
             )
@@ -73,14 +87,22 @@ fun AppNav(vm: AppViewModel = viewModel()) {
             arguments = listOf(navArgument("id") { type = NavType.LongType; defaultValue = -1L }),
         ) { entry ->
             val id = entry.arguments?.getLong("id") ?: -1L
+            var existing by remember(id) { mutableStateOf<Patient?>(null) }
+            LaunchedEffect(id) {
+                existing = if (id > 0) vm.getPatient(id) else null
+            }
             PatientFormScreen(
-                existing = if (id > 0) vm.patients.find { it.id == id } else null,
+                existing = existing,
                 onBack = { nav.popBackStack() },
                 onSave = { patient, startCapture ->
                     vm.savePatient(patient) { newId ->
-                        if (startCapture) nav.navigate("capture/$newId") {
-                            popUpTo(Routes.HOME)
-                        } else nav.popBackStack()
+                        if (startCapture) {
+                            nav.navigate("capture/$newId") {
+                                popUpTo(Routes.HOME)
+                            }
+                        } else {
+                            nav.popBackStack()
+                        }
                     }
                 },
             )
@@ -90,19 +112,33 @@ fun AppNav(vm: AppViewModel = viewModel()) {
             arguments = listOf(navArgument("patientId") { type = NavType.LongType }),
         ) { entry ->
             val patientId = entry.arguments!!.getLong("patientId")
-            val patient = vm.patients.find { it.id == patientId }
-            CaptureScreen(
-                patient = patient,
-                controller = vm.lightController,
-                onBack = { nav.popBackStack() },
-                onFinished = { paths, moisture, sessionDir ->
-                    vm.runAnalysis(patientId, paths, moisture, sessionDir) { sessionId ->
-                        nav.navigate("report/$sessionId") {
-                            popUpTo(Routes.HOME)
+            var patient by remember(patientId) { mutableStateOf<Patient?>(null) }
+            var loadFailed by remember(patientId) { mutableStateOf(false) }
+            LaunchedEffect(patientId) {
+                // Always load from Room — do not depend on filtered patient list.
+                patient = vm.getPatient(patientId)
+                loadFailed = patient == null
+            }
+            when {
+                patient != null -> CaptureScreen(
+                    patient = patient,
+                    controller = vm.lightController,
+                    onBack = { nav.popBackStack() },
+                    onFinished = { paths, moisture, sessionDir ->
+                        vm.runAnalysis(patientId, paths, moisture, sessionDir) { sessionId ->
+                            nav.navigate("report/$sessionId") {
+                                popUpTo(Routes.HOME)
+                            }
                         }
-                    }
-                },
-            )
+                    },
+                )
+                loadFailed -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    androidx.compose.material3.Text("Paciente no encontrado (id=$patientId)")
+                }
+                else -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(color = Accent)
+                }
+            }
         }
         composable(
             route = Routes.REPORT,

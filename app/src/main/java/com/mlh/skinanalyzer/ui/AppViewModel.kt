@@ -267,10 +267,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         map to imagePaths.toMutableMap().also { m ->
                             derived.forEach { (k, bmp) ->
                                 if (!m.containsKey(k)) {
-                                    val out = File(
-                                        getApplication<Application>().cacheDir,
-                                        "derived_${k}_${System.currentTimeMillis()}.jpg",
-                                    )
+                                    val                                     out = File(
+                                        getApplication<Application>().filesDir,
+                                        "sessions/derived_${k}_${System.currentTimeMillis()}.jpg",
+                                    ).also { it.parentFile?.mkdirs() }
                                     out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
                                     m[k] = out.absolutePath
                                 }

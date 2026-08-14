@@ -45,8 +45,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -109,9 +111,8 @@ fun CaptureScreen(
     ) { hasCamPermission = it }
 
     val activity = context as? Activity
-    val useUvc = remember(activity) {
-        activity != null && Mj008UvcSession.shouldPreferUvc(activity)
-    }
+    // Prefer UVC, but if it fails to start we fall back to CameraX so Captura always opens.
+    var useUvc by remember { mutableStateOf(activity != null) }
     val uvcSession = remember(activity) {
         activity?.let { Mj008UvcSession(it) }
     }
@@ -230,9 +231,13 @@ fun CaptureScreen(
                     AndroidView(
                         factory = { ctx ->
                             UVCCameraTextureView(ctx).also { view ->
-                                controller.releaseUsbForUvc()
-                                uvcSession.bindPreview(view)
-                                uvcSession.start()
+                                try {
+                                    controller.releaseUsbForUvc()
+                                    uvcSession.bindPreview(view)
+                                    uvcSession.start()
+                                } catch (e: Exception) {
+                                    Log.e("Capture", "UVC start failed", e)
+                                }
                             }
                         },
                         modifier = Modifier.fillMaxSize(),
@@ -254,7 +259,7 @@ fun CaptureScreen(
                                     uvcLabel.ifBlank { "Conectando cámara USB3.0…" },
                                     color = Paper,
                                     style = MaterialTheme.typography.bodyLarge,
-                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                                    textAlign = TextAlign.Center,
                                 )
                                 Spacer(Modifier.height(12.dp))
                                 Button(
@@ -264,6 +269,13 @@ fun CaptureScreen(
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara") }
+                                Spacer(Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        runCatching { uvcSession.release() }
+                                        useUvc = false
+                                    },
+                                ) { Text("Usar cámara alternativa") }
                             }
                         }
                     }
@@ -382,8 +394,8 @@ fun CaptureScreen(
                             capturing = true
                             try {
                                 val sessionDir = File(
-                                    context.cacheDir,
-                                    "capture_${System.currentTimeMillis()}",
+                                    context.filesDir,
+                                    "sessions/capture_${System.currentTimeMillis()}",
                                 ).apply { mkdirs() }
                                 if (useUvc && uvcSession != null) {
                                     if (!uvcSession.awaitReady()) {

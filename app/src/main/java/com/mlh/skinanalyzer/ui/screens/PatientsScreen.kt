@@ -1,7 +1,6 @@
 package com.mlh.skinanalyzer.ui.screens
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -109,7 +108,6 @@ fun PatientsScreen(
                         Modifier
                             .fillMaxWidth()
                             .background(Cream, RoundedCornerShape(4.dp))
-                            .clickable { onOpen(p.id) }
                             .padding(14.dp),
                     ) {
                         Text(p.name, style = MaterialTheme.typography.titleLarge)
@@ -127,8 +125,13 @@ fun PatientsScreen(
                             IconButton(onClick = { onEdit(p.id) }) {
                                 Icon(Icons.Outlined.Edit, "Editar")
                             }
-                            IconButton(onClick = { onOpen(p.id) }) {
-                                Icon(Icons.Outlined.History, "Historial")
+                            OutlinedButton(
+                                onClick = { onOpen(p.id) },
+                                shape = RoundedCornerShape(4.dp),
+                            ) {
+                                Icon(Icons.Outlined.History, null)
+                                Spacer(Modifier.width(4.dp))
+                                Text("Historial")
                             }
                             Button(
                                 onClick = { onAnalyze(p.id) },

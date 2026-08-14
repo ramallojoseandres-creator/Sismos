@@ -204,7 +204,7 @@ object ReportGenerator {
         drawWrapped(clinic.footerNote, muted)
         doc.finishPage(page)
 
-        val dir = File(context.cacheDir, "reports").apply { mkdirs() }
+        val dir = File(context.filesDir, "reports").apply { mkdirs() }
         val file = File(dir, "MLH_informe_${patient.name.replace(" ", "_")}_$sessionTime.pdf")
         FileOutputStream(file).use { doc.writeTo(it) }
         doc.close()
