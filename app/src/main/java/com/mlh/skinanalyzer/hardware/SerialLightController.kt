@@ -9,21 +9,18 @@ import java.io.OutputStream
 import java.nio.charset.Charset
 
 /**
- * MJ-008 / A6 light controller via UART.
+ * MJ-008 light board controller via UART `/dev/ttyS4`.
  *
- * Protocol reverse-engineered from Moji AI Skin Tester (Bitmoji A6):
- * - Device: /dev/ttyS4
- * - Baud: 115200 (v2 text protocol) or 9600 (legacy AA66 binary)
- * - Text commands are ASCII/GB18030, terminated with "\n\r"
+ * Text protocol (115200, GB18030 + "\n\r"):
+ *   TCCCMD_W / N / P / UV / WS + percent   (center channel)
+ *   TCLCMD_* / TCRCMD_*                    (left / right)
+ *   TCCMD_OFF, TCCMD_PWM_SETL, TC_HEART
  *
- * Channel prefixes (Left / Center / Right):
- *   TCLCMD_ / TCCCMD_ / TCRCMD_  + W | N | P | UV | WS + percent (e.g. "49%")
- * Close all: TCCMD_OFF
- * Multi mode: TCCMD_PWM_SETL
+ * Legacy binary (9600): AA 66 cmd arg 23 — kept as fallback for older MJ boards.
  */
 class SerialLightController(
-    private val devicePath: String = DEFAULT_DEVICE,
-    private val baudRate: Int = DEFAULT_BAUD,
+    private val devicePath: String = Mj008Hardware.SERIAL_DEVICE,
+    private var baudRate: Int = Mj008Hardware.SERIAL_BAUD_PRIMARY,
 ) {
     private var outputStream: OutputStream? = null
     private var inputStream: InputStream? = null
@@ -32,43 +29,58 @@ class SerialLightController(
         private set
     var lastError: String? = null
         private set
+    var activePreset: Mj008Hardware.LightPreset =
+        Mj008Hardware.presetFor(Mj008Hardware.CameraVariant.MOJI_25443)
+        private set
+    var usingLegacyBinary: Boolean = false
+        private set
+
+    fun setCameraVariant(variant: Mj008Hardware.CameraVariant) {
+        activePreset = Mj008Hardware.presetFor(variant)
+    }
 
     fun open(): Boolean {
         close()
         return try {
             val file = File(devicePath)
             if (!file.exists()) {
-                lastError = "Puerto serial no encontrado: $devicePath"
+                lastError = "MJ-008: puerto LED no encontrado ($devicePath)"
                 Log.w(TAG, lastError!!)
                 return false
             }
-            // Prefer native SerialPort via reflection if available; otherwise File streams.
-            val opened = openWithNative(file) || openWithStreams(file)
+            baudRate = Mj008Hardware.SERIAL_BAUD_PRIMARY
+            usingLegacyBinary = false
+            var opened = openWithNative(file) || openWithStreams(file)
+            if (!opened) {
+                // Some MJ-008 boards expose the older 9600 AA66 path
+                baudRate = Mj008Hardware.SERIAL_BAUD_LEGACY
+                usingLegacyBinary = true
+                opened = openWithNative(file) || openWithStreams(file)
+            }
             isOpen = opened
             if (opened) {
                 lastError = null
-                sendRawText(CMD_MULTI_MODE)
-                sendHeartbeat()
+                if (!usingLegacyBinary) {
+                    sendRawText(CMD_MULTI_MODE)
+                    sendHeartbeat()
+                }
             }
             opened
         } catch (e: Exception) {
             lastError = e.message
-            Log.e(TAG, "open failed", e)
+            Log.e(TAG, "MJ-008 open failed", e)
             false
         }
     }
 
     private fun openWithNative(file: File): Boolean {
         return try {
-            // android.serialport.SerialPort or kongqw equivalent if present on device image
             val clazz = Class.forName("android.serialport.SerialPort")
             val ctor = clazz.getConstructor(File::class.java, Int::class.javaPrimitiveType)
             val port = ctor.newInstance(file, baudRate)
             fdHolder = port
-            val getOut = clazz.getMethod("getOutputStream")
-            val getIn = clazz.getMethod("getInputStream")
-            outputStream = getOut.invoke(port) as OutputStream
-            inputStream = getIn.invoke(port) as InputStream
+            outputStream = clazz.getMethod("getOutputStream").invoke(port) as OutputStream
+            inputStream = clazz.getMethod("getInputStream").invoke(port) as InputStream
             true
         } catch (_: ClassNotFoundException) {
             tryOpenKongqw(file)
@@ -86,7 +98,6 @@ class SerialLightController(
             val ok = open.invoke(manager, file, baudRate) as Boolean
             if (!ok) return false
             fdHolder = manager
-            // sendBytes path only — store manager for send
             true
         } catch (_: Exception) {
             false
@@ -95,12 +106,12 @@ class SerialLightController(
 
     private fun openWithStreams(file: File): Boolean {
         return try {
-            // Requires root / system UID on most MJ tablets for /dev/ttyS4
             outputStream = FileOutputStream(file)
             inputStream = FileInputStream(file)
             true
         } catch (e: Exception) {
-            lastError = "Sin permiso para $devicePath (${e.message}). Ejecutar como app de sistema o root."
+            lastError = "MJ-008: sin permiso en $devicePath (${e.message}). " +
+                "En la tablet del analizador la app suele necesitar ser app de sistema."
             Log.e(TAG, lastError!!)
             false
         }
@@ -137,23 +148,29 @@ class SerialLightController(
     }
 
     fun sendHeartbeat() {
-        sendRawText(CMD_HEART)
+        if (!usingLegacyBinary) sendRawText(CMD_HEART)
     }
 
     fun turnOff() {
-        sendRawText(CMD_OFF)
+        if (usingLegacyBinary) {
+            sendLegacyBinary(0x10, 0x00)
+        } else {
+            sendRawText(CMD_OFF)
+        }
     }
 
     fun setMultiMode() {
-        sendRawText(CMD_MULTI_MODE)
+        if (!usingLegacyBinary) sendRawText(CMD_MULTI_MODE)
     }
 
-    /**
-     * Set center-channel intensity for a hardware spectrum group.
-     * @param channel 1=W, 2=N(XPL), 3=P(PPL), 4=WS, 5=UV
-     */
     fun setCenterChannel(channel: Int, percent: Int) {
         val p = percent.coerceIn(0, 100)
+        if (usingLegacyBinary) {
+            // Legacy: channel index in cmd, intensity in arg (approx scale)
+            val cmd = (0x10 + channel.coerceIn(1, 5)).toByte()
+            sendLegacyBinary(cmd, (p * 2.55f).toInt().coerceIn(0, 255).toByte())
+            return
+        }
         val prefix = when (channel) {
             1 -> "TCCCMD_W"
             2 -> "TCCCMD_N"
@@ -165,46 +182,43 @@ class SerialLightController(
         sendRawText("$prefix$p%")
     }
 
+    /** Apply MJ-008 spectral group with OEM intensity curve for the detected camera. */
     fun applyLightMode(mode: LightMode) {
         if (mode.hardwareChannel == null) return
+        val p = activePreset
         turnOff()
         Thread.sleep(80)
         when (mode) {
-            LightMode.WHITE -> setCenterChannel(1, mode.centerPercent)
+            LightMode.WHITE -> setCenterChannel(1, p.whiteCenter)
             LightMode.XPL -> {
-                // XPL: mostly negative polar + tiny white fill (matches OEM presets)
-                setCenterChannel(1, 3)
-                setCenterChannel(2, mode.centerPercent)
+                setCenterChannel(1, p.xplWhiteFill)
+                setCenterChannel(2, p.xplCenter)
             }
             LightMode.PPL -> {
-                setCenterChannel(2, 10)
-                setCenterChannel(3, mode.centerPercent)
+                setCenterChannel(2, p.pplNegFill)
+                setCenterChannel(3, p.pplCenter)
             }
-            LightMode.WOODS -> setCenterChannel(4, mode.centerPercent)
-            LightMode.UV -> setCenterChannel(5, mode.centerPercent)
+            LightMode.WOODS -> setCenterChannel(4, p.woodsCenter)
+            LightMode.UV -> setCenterChannel(5, p.uvCenter)
             else -> Unit
         }
-        Thread.sleep(120)
+        Thread.sleep(140)
     }
 
-    /** Legacy binary protocol (9600 baud devices): AA 66 cmd arg 23 */
     fun sendLegacyBinary(cmd: Byte, arg: Byte) {
-        val packet = byteArrayOf(0xAA.toByte(), 0x66, cmd, arg, 0x23)
-        writeBytes(packet)
+        writeBytes(byteArrayOf(0xAA.toByte(), 0x66, cmd, arg, 0x23))
     }
 
     private fun sendRawText(command: String) {
-        val payload = (command + "\n\r").toByteArray(CHARSET)
-        writeBytes(payload)
-        Log.d(TAG, "TX: $command")
+        writeBytes((command + "\n\r").toByteArray(CHARSET))
+        Log.d(TAG, "MJ-008 TX: $command")
     }
 
     private fun writeBytes(data: ByteArray) {
         val holder = fdHolder
         if (holder != null) {
             try {
-                val m = holder.javaClass.getMethod("sendBytes", ByteArray::class.java)
-                m.invoke(holder, data)
+                holder.javaClass.getMethod("sendBytes", ByteArray::class.java).invoke(holder, data)
                 return
             } catch (_: Exception) {
             }
@@ -214,9 +228,9 @@ class SerialLightController(
     }
 
     companion object {
-        private const val TAG = "SerialLightController"
-        const val DEFAULT_DEVICE = "/dev/ttyS4"
-        const val DEFAULT_BAUD = 115200
+        private const val TAG = "Mj008Lights"
+        const val DEFAULT_DEVICE = Mj008Hardware.SERIAL_DEVICE
+        const val DEFAULT_BAUD = Mj008Hardware.SERIAL_BAUD_PRIMARY
         private val CHARSET: Charset = Charset.forName("GB18030")
 
         const val CMD_OFF = "TCCMD_OFF"

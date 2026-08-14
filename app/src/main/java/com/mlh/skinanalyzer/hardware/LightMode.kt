@@ -1,10 +1,10 @@
 package com.mlh.skinanalyzer.hardware
 
 /**
- * Spectral capture modes for MJ-008 / Moji AI Skin Tester compatible devices.
+ * Spectral capture modes for **MJ-008 Maokin Miaojin**.
  * Physical LED groups (W/N/P/WS/UV) are driven over /dev/ttyS4.
  * Blue / Brown / Red are derived spectral maps from UV / Wood / White captures
- * (same presentation as the original 8-light report).
+ * (same 8-light report layout as the OEM MJ-008 / Moji software).
  */
 enum class LightMode(
     val id: Int,

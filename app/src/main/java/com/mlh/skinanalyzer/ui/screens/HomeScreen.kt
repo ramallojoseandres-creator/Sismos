@@ -140,7 +140,7 @@ fun HomeScreen(
                     )
                     Spacer(Modifier.height(16.dp))
                     Text(
-                        "Análisis multiespectral de piel para consulta personal. Sin inicio de sesión.",
+                        "Analizador MJ-008 Maokin Miaojin · uso personal, sin inicio de sesión.",
                         style = MaterialTheme.typography.bodyLarge,
                         color = Ink.copy(alpha = 0.75f),
                         modifier = Modifier.fillMaxWidth(0.9f),
@@ -179,7 +179,7 @@ fun HomeScreen(
                             modifier = Modifier.weight(1f),
                         )
                         IconButton(onClick = onRefreshHardware) {
-                            Icon(Icons.Outlined.Refresh, contentDescription = "Reintentar hardware")
+                            Icon(Icons.Outlined.Refresh, contentDescription = "Reintentar MJ-008")
                         }
                     }
                 }

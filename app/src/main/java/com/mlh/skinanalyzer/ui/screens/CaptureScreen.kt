@@ -3,7 +3,6 @@ package com.mlh.skinanalyzer.ui.screens
 import android.Manifest
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
-import android.graphics.Matrix
 import android.util.Log
 import android.view.ViewGroup
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -65,6 +64,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
 import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.hardware.LightMode
+import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.SerialLightController
 import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
@@ -90,6 +90,7 @@ fun CaptureScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
+    val detection = remember { Mj008Hardware.detect(context) }
 
     var hasCamPermission by remember {
         mutableStateOf(
@@ -103,6 +104,7 @@ fun CaptureScreen(
 
     LaunchedEffect(Unit) {
         if (!hasCamPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
+        controller.setCameraVariant(detection.cameraVariant)
         controller.open()
         controller.setMultiMode()
         controller.applyLightMode(LightMode.WHITE)
@@ -145,7 +147,7 @@ fun CaptureScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
             }
             Column(Modifier.weight(1f)) {
-                Text("Captura multiespectral", style = MaterialTheme.typography.headlineMedium)
+                Text("Captura MJ-008", style = MaterialTheme.typography.headlineMedium)
                 Text(
                     patient?.let { "${it.name} · ${it.age} años" } ?: "Paciente",
                     style = MaterialTheme.typography.bodyMedium,
@@ -254,7 +256,11 @@ fun CaptureScreen(
                     color = Accent,
                 )
                 Text(
-                    if (controller.isOpen) "LED serial: activo" else "LED serial: no disponible (captura igual)",
+                    if (controller.isOpen) {
+                        "MJ-008 LED: activo (${detection.cameraVariant.name})"
+                    } else {
+                        "MJ-008 LED: no disponible — captura de cámara igual"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink.copy(alpha = 0.55f),
                 )

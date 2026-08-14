@@ -19,6 +19,7 @@ import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
 import com.mlh.skinanalyzer.analysis.SkinAnalyzer
 import com.mlh.skinanalyzer.data.AnalysisSession
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.SerialLightController
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -33,7 +34,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     var patients by mutableStateOf<List<Patient>>(emptyList())
         private set
-    var hardwareStatus by mutableStateOf("Comprobando hardware…")
+    var hardwareStatus by mutableStateOf("Comprobando MJ-008…")
+        private set
+    var mj008Detection by mutableStateOf<Mj008Hardware.Detection?>(null)
         private set
     var analyzing by mutableStateOf(false)
         private set
@@ -51,12 +54,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshHardware() {
         viewModelScope.launch(Dispatchers.IO) {
+            val detection = Mj008Hardware.detect(getApplication())
+            mj008Detection = detection
+            lightController.setCameraVariant(detection.cameraVariant)
             val ok = lightController.open()
             hardwareStatus = if (ok) {
-                "MJ-008: luces LED conectadas (${SerialLightController.DEFAULT_DEVICE})"
+                "MJ-008 listo · LED ${if (lightController.usingLegacyBinary) "legacy 9600" else "115200"} · cámara ${detection.cameraVariant.name}"
             } else {
-                "Luces: ${lightController.lastError ?: "modo cámara (sin serial)"}. " +
-                    "La captura funciona; LED requiere /dev/ttyS4 en la tablet del analizador."
+                detection.summary + " · " +
+                    (lightController.lastError ?: "LED no conectado; captura de cámara disponible")
             }
         }
     }
