@@ -146,18 +146,36 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun getUvcSession(): Mj008UvcSession? = uvcSession
 
     /**
-     * Hand off USB from LED (USB-XU) to UVC preview. All USB close/open work
-     * runs off the UI thread — MJ-008 firmware can block for seconds (ANR).
+     * Hand off USB from any prior LED claim to UVC preview.
+     *
+     * Do **not** open UART here: OEM drives MJ-008 lights via UVC `controlLed`
+     * after preview. Opening `/dev/ttyS1` can block forever and freeze Captura
+     * at “liberando USB…”.
      */
     suspend fun prepareUvcSession(activity: android.app.Activity): Mj008UvcSession {
+        val previous = uvcSession
+        uvcSession = null
         withContext(Dispatchers.IO) {
-            releaseUvcSession()
-            lightController.releaseUsbForUvc()
+            if (previous != null) {
+                val done = kotlinx.coroutines.CompletableDeferred<Unit>()
+                Thread({
+                    try {
+                        previous.release()
+                    } catch (e: Exception) {
+                        Log.e("MLH", "previous UVC release", e)
+                    } finally {
+                        done.complete(Unit)
+                    }
+                }, "mlh-uvc-release").also { it.isDaemon = true }.start()
+                val finished = kotlinx.coroutines.withTimeoutOrNull(2_000) { done.await() }
+                if (finished == null) {
+                    Log.w("MLH", "UVC release timed out — continuing to open camera")
+                }
+            }
+            runCatching { lightController.releaseUsbForUvc() }
+                .onFailure { Log.w("MLH", "releaseUsbForUvc: ${it.message}") }
         }
-        kotlinx.coroutines.delay(350)
-        withContext(Dispatchers.IO) {
-            runCatching { lightController.openSerialOnly() }
-        }
+        kotlinx.coroutines.delay(200)
         return Mj008UvcSession(activity).also { uvcSession = it }
     }
 

@@ -91,6 +91,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -197,14 +198,14 @@ fun CaptureScreen(
         Log.i("Capture", usbSummary)
 
         try {
-            uvcLabel = "$usbSummary — liberando USB…"
-            val session = vm.prepareUvcSession(act)
+            uvcLabel = "$usbSummary — preparando cámara…"
+            val session = withTimeout(8_000) { vm.prepareUvcSession(act) }
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
-            uvcLabel = "$usbSummary — creando handler…"
+            uvcLabel = "$usbSummary — creando vista…"
             withContext(Dispatchers.Main.immediate) {
                 session.bindPreview(view)
             }
-            uvcLabel = "$usbSummary — conectando (no cierre la app)…"
+            uvcLabel = "$usbSummary — conectando USB3.0…"
             withContext(Dispatchers.Main.immediate) {
                 session.start()
             }
@@ -224,10 +225,13 @@ fun CaptureScreen(
         } catch (e: Exception) {
             Log.e("Capture", "UVC prepare/bind/start failed", e)
             val detail = e.message ?: e.javaClass.simpleName
-            uvcLabel = if (detail.contains("0x7f0e0000") || detail.contains("Resource ID")) {
-                "Falta recurso cámara (click). Reinstale v${BuildConfig.VERSION_NAME}+"
-            } else {
-                "Error UVC: $detail"
+            uvcLabel = when {
+                detail.contains("timed out", ignoreCase = true) ||
+                    detail.contains("Timeout", ignoreCase = true) ->
+                    "Tiempo agotado al preparar USB. Pulse Reintentar. v${BuildConfig.VERSION_NAME}"
+                detail.contains("0x7f0e0000") || detail.contains("Resource ID") ->
+                    "Falta recurso cámara (click). Reinstale v${BuildConfig.VERSION_NAME}+"
+                else -> "Error UVC: $detail"
             }
         }
     }
