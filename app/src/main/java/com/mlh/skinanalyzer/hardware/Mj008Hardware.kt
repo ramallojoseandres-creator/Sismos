@@ -39,9 +39,12 @@ object Mj008Hardware {
 
     /**
      * USB camera product IDs seen on Moji / MJ-family analyzers.
-     * 25441 = ZX FCA56, 25443 / 25456 = Moji L12345, 52243 = SXW.
+     * 25441 = ZX FCA56, 25443 / 25456 = Moji L12345, 52243 = SXW,
+     * 12416 = MJ-008 USB3.0 analyzer (vid 3804, ZK-R36A boards).
      */
-    val knownCameraProductIds = intArrayOf(25441, 25443, 25456, 52243)
+    const val ANALYZER_USB_VENDOR_ID = 3804
+    const val ANALYZER_USB_PRODUCT_ID = 12416
+    val knownCameraProductIds = intArrayOf(25441, 25443, 25456, 52243, 12416)
 
     data class SerialCandidate(val path: String, val baud: Int)
 

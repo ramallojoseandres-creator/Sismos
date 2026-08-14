@@ -128,10 +128,26 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 hardwareDiagnostics = detection.diagnostics
                 val ok = lightController.open()
                 hardwareStatus = if (ok) {
-                    "MJ-008 listo · LED ${lightController.backendLabel} · cámara ${detection.cameraVariant.name} · offline"
+                    buildString {
+                        append("MJ-008 listo · LED ${lightController.backendLabel}")
+                        append(" · cámara ${detection.cameraVariant.name}")
+                        if (detection.usbCameras.isNotEmpty()) {
+                            append(" · USB3.0 detectada")
+                            append(" · abra Captura y acepte permiso USB")
+                        } else {
+                            append(" · sin USB cámara")
+                        }
+                        append(" · sin nube")
+                    }
                 } else {
-                    detection.summary + " · " +
-                        (lightController.lastError ?: "LED no conectado; captura UVC disponible")
+                    buildString {
+                        append(detection.summary)
+                        append(" · ")
+                        append(lightController.lastError ?: "LED no conectado")
+                        if (detection.usbCameras.isNotEmpty()) {
+                            append(" · USB3.0 detectada — Captura + permiso USB")
+                        }
+                    }
                 }
                 Log.i("MLH", "HW diagnostics:\n${detection.diagnostics}")
             }.onFailure {

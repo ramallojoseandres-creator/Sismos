@@ -28,6 +28,12 @@ object Mj008UsbDevices {
             score += 100
             reasons += "product=USB Camera"
         }
+        if (device.vendorId == Mj008Hardware.ANALYZER_USB_VENDOR_ID &&
+            device.productId == Mj008Hardware.ANALYZER_USB_PRODUCT_ID
+        ) {
+            score += 130
+            reasons += "MJ-008 USB3.0 vid/pid"
+        }
         if (device.productId in Mj008Hardware.knownCameraProductIds) {
             score += 90
             reasons += "knownPid=${device.productId}"
