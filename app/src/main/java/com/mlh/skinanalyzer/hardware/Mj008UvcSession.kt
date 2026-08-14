@@ -245,20 +245,24 @@ class Mj008UvcSession(
         }
     }
 
-    private fun systemUsbDevices(): List<UsbDevice> = try {
-        val mgr = activity.getSystemService(Context.USB_SERVICE) as? UsbManager
-            ?: return emptyList()
-        mgr.deviceList.values.toList()
-    } catch (_: Exception) {
-        emptyList()
+    private fun systemUsbDevices(): List<UsbDevice> {
+        return try {
+            val mgr = activity.getSystemService(Context.USB_SERVICE) as? UsbManager
+                ?: return emptyList()
+            mgr.deviceList.values.toList()
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
-    private fun systemHasPermission(device: UsbDevice): Boolean = try {
-        val mgr = activity.getSystemService(Context.USB_SERVICE) as? UsbManager
-            ?: return false
-        mgr.hasPermission(device)
-    } catch (_: Exception) {
-        false
+    private fun systemHasPermission(device: UsbDevice): Boolean {
+        return try {
+            val mgr = activity.getSystemService(Context.USB_SERVICE) as? UsbManager
+                ?: return false
+            mgr.hasPermission(device)
+        } catch (_: Exception) {
+            false
+        }
     }
 
     fun stop() {
