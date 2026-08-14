@@ -28,6 +28,18 @@ object OemIndicatorCatalog {
     fun layer(oemType: String?): String =
         meta[oemType]?.third ?: "superficial"
 
+    /**
+     * Which spectral capture is the face underlay for [oemType] maps
+     * (matches landmark light used in OemSkinEngine).
+     */
+    fun baseCaptureFilename(oemType: String?): String = when (oemType) {
+        "skin_pigmentation", "skin_sensitivity" -> OemCaptureFiles.POSITIVE
+        "skin_blackhead", "skin_pore", "black_eye", "skin_spot",
+        "oily_gloss", "skin_acne", "skin_acne_scar",
+        -> OemCaptureFiles.NEGATIVE
+        else -> OemCaptureFiles.WHITE
+    }
+
     fun levelToCareLevel(level: String?): Int = when (level?.lowercase()) {
         "1", "i", "leve" -> 1
         "2", "ii" -> 2

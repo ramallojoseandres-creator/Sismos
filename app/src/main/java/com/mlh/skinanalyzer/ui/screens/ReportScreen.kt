@@ -3,15 +3,20 @@ package com.mlh.skinanalyzer.ui.screens
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -19,6 +24,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -32,23 +38,34 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
+import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
+import com.mlh.skinanalyzer.analysis.oem.OemIndicatorCatalog
 import com.mlh.skinanalyzer.analysis.oem.OemIndicatorResult
 import com.mlh.skinanalyzer.analysis.SkinMetric
 import com.mlh.skinanalyzer.data.AnalysisSession
@@ -63,6 +80,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -100,6 +118,10 @@ fun ReportScreen(
             val type = object : com.google.gson.reflect.TypeToken<List<OemIndicatorResult>>() {}.type
             Gson().fromJson<List<OemIndicatorResult>>(s.oemIndicatorsJson, type) ?: emptyList()
         }.getOrDefault(emptyList())
+        // Prefer Mapas tab when OEM overlays exist (OEM-like consult flow).
+        if (oemIndicators.any { !it.overlayPath.isNullOrBlank() }) {
+            tab = 4
+        }
         val keys = result?.priorityKeys.orEmpty().ifEmpty {
             result?.metrics?.sortedByDescending { it.score }?.take(3)?.map { it.key }.orEmpty()
         }
@@ -195,7 +217,7 @@ fun ReportScreen(
             Modifier.horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            listOf("Resumen", "Superficial", "Profunda", "3/5 ojos", "Mapas OEM", "Cuidado").forEachIndexed { i, label ->
+            listOf("Resumen", "Superficial", "Profunda", "3/5 ojos", "Mapas", "Cuidado").forEachIndexed { i, label ->
                 val selected = tab == i
                 Button(
                     onClick = { tab = i },
@@ -210,7 +232,7 @@ fun ReportScreen(
         Spacer(Modifier.height(10.dp))
 
         if (images.isNotEmpty()) {
-            Text("Imágenes espectrales", style = MaterialTheme.typography.titleLarge)
+            Text("Fotos capturadas (8 espectros)", style = MaterialTheme.typography.titleLarge)
             Spacer(Modifier.height(6.dp))
             LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(images.entries.toList()) { (name, path) ->
@@ -219,7 +241,7 @@ fun ReportScreen(
                     }
                     Column(
                         Modifier
-                            .width(100.dp)
+                            .width(120.dp)
                             .background(Cream, RoundedCornerShape(4.dp))
                             .padding(6.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -228,14 +250,15 @@ fun ReportScreen(
                             Image(
                                 bitmap = bmp.asImageBitmap(),
                                 contentDescription = name,
+                                contentScale = ContentScale.Crop,
                                 modifier = Modifier
-                                    .size(88.dp)
+                                    .size(108.dp)
                                     .background(Ink),
                             )
                         } else {
                             Box(
                                 Modifier
-                                    .size(88.dp)
+                                    .size(108.dp)
                                     .background(Ink.copy(alpha = 0.1f)),
                             )
                         }
@@ -256,6 +279,17 @@ fun ReportScreen(
             when (tab) {
                 0 -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
+                        val oemOk = oemIndicators.isNotEmpty()
+                        Text(
+                            if (oemOk) {
+                                "Motor: análisis nativo OEM (libsalon + MediaPipe) · mapas faciales reales"
+                            } else {
+                                "Motor: heurístico de respaldo · sin mapas faciales OEM"
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (oemOk) Accent else Ink.copy(alpha = 0.55f),
+                        )
+                        Spacer(Modifier.height(6.dp))
                         Text("Tipo de piel: ${r.skinType}", style = MaterialTheme.typography.titleLarge)
                         Text("Edad cutánea: ${r.skinAge} años", style = MaterialTheme.typography.titleLarge, color = Accent)
                         s.moisturePercent?.let {
@@ -267,7 +301,20 @@ fun ReportScreen(
                         Text("Prioridades", style = MaterialTheme.typography.titleLarge)
                         Text(s.recommendations, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(8.dp))
-                        Text("Análisis 100% local · sin ai.aiskin.vip", style = MaterialTheme.typography.bodyMedium, color = Ink.copy(alpha = 0.5f))
+                        Text(
+                            "100% local en esta tablet · sin servidores chinos (ai.aiskin.vip).",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Ink.copy(alpha = 0.5f),
+                        )
+                        if (oemOk) {
+                            Spacer(Modifier.height(8.dp))
+                            Button(
+                                onClick = { tab = 4 },
+                                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                                shape = RoundedCornerShape(4.dp),
+                                modifier = Modifier.fillMaxWidth(),
+                            ) { Text("Ver mapas sobre la cara (deslizar)") }
+                        }
                     }
                 }
                 1 -> MetricList(r.metrics.filter { it.layer == "superficial" })
@@ -292,7 +339,12 @@ fun ReportScreen(
                         }
                     }
                 }
-                4 -> OemMapViewer(oemIndicators, selectedMapIndex) { selectedMapIndex = it }
+                4 -> OemMapViewer(
+                    indicators = oemIndicators,
+                    sessionDir = s.sessionDir,
+                    selected = selectedMapIndex,
+                    onSelect = { selectedMapIndex = it },
+                )
                 else -> LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     item {
                         Text("Guías de cuidado (catálogo local)", style = MaterialTheme.typography.titleLarge)
@@ -343,68 +395,190 @@ fun ReportScreen(
 @Composable
 private fun OemMapViewer(
     indicators: List<OemIndicatorResult>,
+    sessionDir: String,
     selected: Int,
     onSelect: (Int) -> Unit,
 ) {
     if (indicators.isEmpty()) {
         Text(
-            "Mapas OEM no disponibles (análisis heurístico de respaldo).",
+            "Mapas faciales no disponibles. Este informe usó el motor heurístico de respaldo " +
+                "(faltaron archivos OEM, landmarks o libsalon). Vuelva a capturar las 8 luces.",
             color = Ink.copy(alpha = 0.55f),
         )
         return
     }
-    var layerMode by remember { mutableIntStateOf(0) } // 0=superficial, 1=profunda
-    LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        items(indicators.size) { i ->
-            val ind = indicators[i]
-            val isSel = i == selected
-            Button(
-                onClick = { onSelect(i) },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isSel) Accent else Cream,
-                    contentColor = if (isSel) Color.White else Ink,
-                ),
-                shape = RoundedCornerShape(4.dp),
-            ) { Text(ind.displayName, maxLines = 1) }
+    val withMaps = indicators.filter { !it.overlayPath.isNullOrBlank() || !it.blackOverlayPath.isNullOrBlank() }
+    val list = withMaps.ifEmpty { indicators }
+    var reveal by remember(selected) { mutableFloatStateOf(0.55f) }
+
+    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        item {
+            Text(
+                "Deslice el dedo → para marcar manchas/poros sobre la cara; ← para ver solo la foto.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.65f),
+            )
+            Spacer(Modifier.height(6.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                items(list.size) { i ->
+                    val ind = list[i]
+                    val isSel = i == selected
+                    Button(
+                        onClick = {
+                            onSelect(i)
+                            reveal = 0.55f
+                        },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isSel) Accent else Paper,
+                            contentColor = if (isSel) Color.White else Ink,
+                        ),
+                        shape = RoundedCornerShape(4.dp),
+                    ) { Text(ind.displayName, maxLines = 1) }
+                }
+            }
+        }
+        item {
+            val ind = list.getOrNull(selected.coerceIn(0, (list.size - 1).coerceAtLeast(0))) ?: return@item
+            Text(
+                "${ind.displayName} · score ${ind.score} · nivel ${ind.levelLabel}",
+                style = MaterialTheme.typography.titleLarge,
+            )
+            Spacer(Modifier.height(6.dp))
+            val overlayPath = ind.overlayPath ?: ind.blackOverlayPath
+            val baseName = OemIndicatorCatalog.baseCaptureFilename(ind.oemType)
+            val basePath = when {
+                sessionDir.isNotBlank() && File(sessionDir, baseName).exists() ->
+                    File(sessionDir, baseName).absolutePath
+                sessionDir.isNotBlank() && File(sessionDir, OemCaptureFiles.WHITE).exists() ->
+                    File(sessionDir, OemCaptureFiles.WHITE).absolutePath
+                else -> null
+            }
+            val baseBmp = remember(basePath) {
+                basePath?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() }
+            }
+            val overlayBmp = remember(overlayPath) {
+                overlayPath?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() }
+            }
+            if (baseBmp != null || overlayBmp != null) {
+                FaceRevealMap(
+                    base = baseBmp,
+                    overlay = overlayBmp,
+                    reveal = reveal,
+                    onRevealChange = { reveal = it },
+                    label = ind.displayName,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    if (reveal < 0.05f) "Cara completa (sin marcas)"
+                    else if (reveal > 0.95f) "Marcas al 100%"
+                    else "Marcas visibles: ${(reveal * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Accent,
+                )
+                Slider(
+                    value = reveal,
+                    onValueChange = { reveal = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Accent,
+                        activeTrackColor = Accent,
+                    ),
+                )
+            } else {
+                Text(
+                    "Mapa no generado en disco para ${ind.oemType}.",
+                    color = Ink.copy(alpha = 0.5f),
+                )
+            }
         }
     }
-    Spacer(Modifier.height(8.dp))
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        listOf("Capa superficial", "Capa profunda").forEachIndexed { i, label ->
-            val sel = layerMode == i
-            Button(
-                onClick = { layerMode = i },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (sel) Accent else Cream,
-                    contentColor = if (sel) Color.White else Ink,
-                ),
-                shape = RoundedCornerShape(4.dp),
-            ) { Text(label) }
+}
+
+/**
+ * OEM-style wipe: finger left→right reveals indicator marks on the face;
+ * right→left hides them back to the clean capture.
+ */
+@Composable
+private fun FaceRevealMap(
+    base: android.graphics.Bitmap?,
+    overlay: android.graphics.Bitmap?,
+    reveal: Float,
+    onRevealChange: (Float) -> Unit,
+    label: String,
+) {
+    val density = LocalDensity.current
+    val revealState = rememberUpdatedState(reveal)
+    BoxWithConstraints(
+        Modifier
+            .fillMaxWidth()
+            .height(360.dp)
+            .background(Ink)
+            .border(1.dp, Ink.copy(alpha = 0.2f))
+            .pointerInput(Unit) {
+                detectHorizontalDragGestures { change, dragAmount ->
+                    change.consume()
+                    val w = size.width.toFloat().coerceAtLeast(1f)
+                    onRevealChange((revealState.value + dragAmount / w).coerceIn(0f, 1f))
+                }
+            },
+    ) {
+        val widthPx = with(density) { maxWidth.toPx() }
+        val clipReveal = remember(reveal, widthPx) {
+            GenericShape { size, _ ->
+                addRect(Rect(0f, 0f, size.width * reveal.coerceIn(0f, 1f), size.height))
+            }
         }
-    }
-    Spacer(Modifier.height(8.dp))
-    val ind = indicators.getOrNull(selected) ?: return
-    Text(
-        "${ind.displayName} · score ${ind.score} · nivel ${ind.levelLabel} · ${ind.layer}",
-        style = MaterialTheme.typography.titleLarge,
-    )
-    Spacer(Modifier.height(8.dp))
-    val path = when (layerMode) {
-        0 -> ind.overlayPath ?: ind.blackOverlayPath
-        else -> ind.blackOverlayPath ?: ind.overlayPath
-    }
-    val bmp = remember(path) { path?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() } }
-    if (bmp != null) {
-        Image(
-            bitmap = bmp.asImageBitmap(),
-            contentDescription = ind.displayName,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(280.dp)
-                .background(Ink),
+        if (base != null) {
+            Image(
+                bitmap = base.asImageBitmap(),
+                contentDescription = "Foto base",
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        if (overlay != null && reveal > 0.01f) {
+            Image(
+                bitmap = overlay.asImageBitmap(),
+                contentDescription = label,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(clipReveal),
+            )
+        } else if (overlay != null && base == null) {
+            Image(
+                bitmap = overlay.asImageBitmap(),
+                contentDescription = label,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        // Wipe handle
+        Box(
+            Modifier
+                .fillMaxHeight()
+                .width(2.dp)
+                .offset(x = maxWidth * reveal)
+                .background(Paper.copy(alpha = 0.9f))
+                .align(Alignment.CenterStart),
         )
-    } else {
-        Text("Mapa no generado en disco.", color = Ink.copy(alpha = 0.5f))
+        Box(
+            Modifier
+                .align(Alignment.CenterStart)
+                .offset(x = maxWidth * reveal - 12.dp)
+                .size(24.dp)
+                .background(Accent, RoundedCornerShape(12.dp)),
+        )
+        Text(
+            "← cara  |  marcas →",
+            color = Paper.copy(alpha = 0.85f),
+            style = MaterialTheme.typography.labelLarge,
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .padding(8.dp)
+                .background(Ink.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp),
+        )
     }
 }
 
