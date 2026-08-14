@@ -147,6 +147,7 @@ fun CaptureScreen(
     var uvcStartToken by remember { mutableIntStateOf(0) }
     var uvcLabel by remember { mutableStateOf(if (demoMode) "Modo Demo" else "Iniciando UVC…") }
     var uvcReady by remember { mutableStateOf(false) }
+    var lightsOn by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -231,6 +232,7 @@ fun CaptureScreen(
         }
     }
 
+    // Camera ready → turn lights ON; analysis only starts when user taps the button.
     LaunchedEffect(useUvc, uvcSession, demoMode) {
         if (demoMode || !useUvc) return@LaunchedEffect
         var lit = false
@@ -240,10 +242,19 @@ fun CaptureScreen(
                 uvcLabel = session.statusLabel
                 val readyNow = session.isReady
                 uvcReady = readyNow
+                lightsOn = session.lightsOn
                 if (readyNow && !lit) {
                     lit = true
-                    runCatching { session.applyWhiteLight() }
-                    status = "Cámara frontal lista. Coloque el mentón y pulse Iniciar."
+                    status = "Cámara lista · encendiendo luces blancas…"
+                    // Wait OEM 1s white-light window, then force ON again for reliability.
+                    delay(LightMode.WHITE_LIGHT_DELAY_MS + 200)
+                    withContext(Dispatchers.IO) {
+                        runCatching { session.applyWhiteLight() }
+                        delay(300)
+                        runCatching { session.applyWhiteLight() }
+                    }
+                    lightsOn = true
+                    status = "Luces encendidas. Coloque el mentón, cierre los ojos y pulse Iniciar análisis."
                 }
             }
             delay(400)
@@ -531,7 +542,9 @@ fun CaptureScreen(
                 when {
                     demoMode && hasCamPermission -> "Demo · cámara del dispositivo (sin luces USB)"
                     demoMode -> "Demo · fotogramas sintéticos (sin cámara / sin USB)"
-                    useUvc && uvcReady -> "Luces vía USB-XU en cámara frontal · $uvcLabel"
+                    useUvc && uvcReady && lightsOn ->
+                        "Luces blancas encendidas · listo para iniciar · $uvcLabel"
+                    useUvc && uvcReady -> "Cámara lista · encendiendo luces… · $uvcLabel"
                     useUvc -> uvcLabel.ifBlank { "Buscando USB3.0 frontal (vid 3804 / pid 12416)…" }
                     controller.isOpen -> "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
                     else -> "MJ-008 LED: esperando cámara del analizador"
@@ -694,7 +707,7 @@ fun CaptureScreen(
                     },
                     enabled = patient != null && (
                         demoMode ||
-                            (useUvc && uvcReady) ||
+                            (useUvc && uvcReady && lightsOn) ||
                             (!useUvc && hasCamPermission)
                         ),
                     modifier = Modifier
@@ -708,7 +721,8 @@ fun CaptureScreen(
                     Text(
                         when {
                             demoMode -> "Iniciar análisis (Demo)"
-                            !uvcReady && useUvc -> "Espere cámara…"
+                            useUvc && !uvcReady -> "Espere cámara…"
+                            useUvc && !lightsOn -> "Espere luces…"
                             else -> "Iniciar análisis"
                         },
                     )

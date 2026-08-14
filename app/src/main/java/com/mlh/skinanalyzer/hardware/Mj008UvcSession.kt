@@ -47,15 +47,25 @@ class Mj008UvcSession(
 
     @Volatile var lastStatus: String = "UVC: inactivo"
         private set
+
+    /** True after a successful LED command (white on open, or spectral during capture). */
+    @Volatile var lightsOn: Boolean = false
+        private set
+
     val isReady: Boolean
         get() = cameraHandler?.isOpened == true && cameraHandler?.isPreviewing == true
 
     val statusLabel: String
         get() = when {
+            isReady && lightsOn -> {
+                val d = openedDevice.get()
+                val name = d?.let { UsbXuLightController.describe(it) } ?: "analizador"
+                "Cámara + luces ON · $name"
+            }
             isReady -> {
                 val d = openedDevice.get()
                 val name = d?.let { UsbXuLightController.describe(it) } ?: "analizador"
-                "Cámara frontal analizador · $name · ${Mj008Hardware.PREVIEW_WIDTH}×${Mj008Hardware.PREVIEW_HEIGHT}"
+                "Cámara frontal · $name · encendiendo luces…"
             }
             else -> lastStatus
         }
@@ -352,7 +362,14 @@ class Mj008UvcSession(
                 completeReady(true)
                 // OEM: sendEmptyMessageDelayed(1008, 1000) — “下发了白光指令”
                 mainHandler.postDelayed({
-                    if (started.get()) runCatching { applyWhiteLight() }
+                    if (started.get()) {
+                        usbIo.post {
+                            runCatching { applyLightMode(LightMode.WHITE) }
+                            lightsOn = true
+                            lastStatus = "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
+                            Log.i(TAG, lastStatus)
+                        }
+                    }
                 }, LightMode.WHITE_LIGHT_DELAY_MS)
             }
         } catch (e: Exception) {
@@ -404,6 +421,7 @@ class Mj008UvcSession(
 
     fun applyWhiteLight() {
         applyLightMode(LightMode.WHITE)
+        lightsOn = true
     }
 
     fun applyLightMode(mode: LightMode) {
@@ -416,6 +434,7 @@ class Mj008UvcSession(
         val payload = UsbXuLightController.lightPayload(cmd, UsbXuLightController.ARG_ON)
         try {
             handler.controlLed(130, 55318, payload)
+            lightsOn = true
             Log.i(TAG, "LED ${mode.shortName} via UVC XU")
         } catch (e: Exception) {
             Log.e(TAG, "controlLed failed", e)
@@ -431,6 +450,7 @@ class Mj008UvcSession(
             UsbXuLightController.ARG_OFF,
         )
         runCatching { handler.controlLed(130, 55318, payload) }
+        lightsOn = false
     }
 
     suspend fun captureStill(target: File): Bitmap? {
@@ -450,6 +470,7 @@ class Mj008UvcSession(
     fun release() {
         stop()
         opening.set(false)
+        lightsOn = false
         mainHandler.removeCallbacksAndMessages(null)
         runCatching { cameraHandler?.release() }
         runCatching { usbMonitor?.destroy() }
