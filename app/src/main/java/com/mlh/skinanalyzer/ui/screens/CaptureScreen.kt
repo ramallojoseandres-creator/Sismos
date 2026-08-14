@@ -22,7 +22,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -31,7 +30,9 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CameraAlt
@@ -90,7 +91,7 @@ fun CaptureScreen(
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
-    val detection = remember { Mj008Hardware.detect(context) }
+    val detection = remember { runCatching { Mj008Hardware.detect(context) }.getOrNull() }
 
     var hasCamPermission by remember {
         mutableStateOf(
@@ -104,16 +105,19 @@ fun CaptureScreen(
 
     LaunchedEffect(Unit) {
         if (!hasCamPermission) permissionLauncher.launch(Manifest.permission.CAMERA)
-        controller.setCameraVariant(detection.cameraVariant)
-        controller.open()
-        controller.setMultiMode()
-        controller.applyLightMode(LightMode.WHITE)
+        withContext(Dispatchers.IO) {
+            runCatching {
+                detection?.let { controller.setCameraVariant(it.cameraVariant) }
+                controller.open()
+                controller.setMultiMode()
+                controller.applyLightMode(LightMode.WHITE)
+            }
+        }
     }
     DisposableEffect(Unit) {
         onDispose {
-            try {
-                controller.turnOff()
-            } catch (_: Exception) {
+            scope.launch(Dispatchers.IO) {
+                runCatching { controller.turnOff() }
             }
         }
     }
@@ -127,7 +131,9 @@ fun CaptureScreen(
     val captured = remember { mutableStateMapOf<String, Pair<String, Bitmap?>>() }
     var currentIndex by remember { mutableIntStateOf(0) }
     var capturing by remember { mutableStateOf(false) }
-    var status by remember { mutableStateOf("Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar.") }
+    var status by remember {
+        mutableStateOf("Coloque el mentón en el soporte, cierre los ojos y pulse Iniciar.")
+    }
     var moistureText by remember { mutableStateOf("") }
     var previewBitmap by remember { mutableStateOf<Bitmap?>(null) }
 
@@ -164,211 +170,212 @@ fun CaptureScreen(
             color = Accent,
         )
 
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Box(
-                Modifier
-                    .weight(1.4f)
-                    .fillMaxHeight()
-                    .border(1.dp, Ink.copy(alpha = 0.2f))
-                    .background(Ink),
-            ) {
-                if (hasCamPermission) {
-                    AndroidView(
-                        factory = { ctx ->
-                            val previewView = PreviewView(ctx).apply {
-                                layoutParams = ViewGroup.LayoutParams(
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                    ViewGroup.LayoutParams.MATCH_PARENT,
-                                )
-                                scaleType = PreviewView.ScaleType.FILL_CENTER
-                            }
-                            val providerFuture = ProcessCameraProvider.getInstance(ctx)
-                            providerFuture.addListener({
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .weight(1f)
+                .border(1.dp, Ink.copy(alpha = 0.2f))
+                .background(Ink),
+        ) {
+            if (hasCamPermission) {
+                AndroidView(
+                    factory = { ctx ->
+                        val previewView = PreviewView(ctx).apply {
+                            layoutParams = ViewGroup.LayoutParams(
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                                ViewGroup.LayoutParams.MATCH_PARENT,
+                            )
+                            scaleType = PreviewView.ScaleType.FILL_CENTER
+                        }
+                        val providerFuture = ProcessCameraProvider.getInstance(ctx)
+                        providerFuture.addListener({
+                            try {
                                 val provider = providerFuture.get()
                                 val preview = Preview.Builder().build()
                                 preview.setSurfaceProvider(previewView.surfaceProvider)
-                                try {
-                                    provider.unbindAll()
-                                    // Prefer front if tablet cam; MJ-008 often exposes USB as back/external
-                                    val selector = CameraSelector.DEFAULT_BACK_CAMERA
-                                    provider.bindToLifecycle(
-                                        lifecycleOwner,
-                                        selector,
-                                        preview,
-                                        imageCapture,
-                                    )
-                                } catch (e: Exception) {
-                                    Log.e("Capture", "bind camera", e)
+                                provider.unbindAll()
+                                val selectors = listOf(
+                                    CameraSelector.DEFAULT_BACK_CAMERA,
+                                    CameraSelector.DEFAULT_FRONT_CAMERA,
+                                )
+                                var bound = false
+                                for (selector in selectors) {
                                     try {
-                                        provider.unbindAll()
                                         provider.bindToLifecycle(
                                             lifecycleOwner,
-                                            CameraSelector.DEFAULT_FRONT_CAMERA,
+                                            selector,
                                             preview,
                                             imageCapture,
                                         )
-                                    } catch (e2: Exception) {
-                                        Log.e("Capture", "front bind failed", e2)
+                                        bound = true
+                                        break
+                                    } catch (e: Exception) {
+                                        Log.w("Capture", "bind failed for selector", e)
                                     }
                                 }
-                            }, ContextCompat.getMainExecutor(ctx))
-                            previewView
-                        },
-                        modifier = Modifier.fillMaxSize(),
-                    )
-                } else {
-                    Text(
-                        "Se requiere permiso de cámara",
-                        color = Paper,
-                        modifier = Modifier.align(Alignment.Center),
-                    )
-                }
-                // Midline guide
-                Box(
-                    Modifier
-                        .width(1.dp)
-                        .fillMaxHeight()
-                        .align(Alignment.Center)
-                        .background(Paper.copy(alpha = 0.45f)),
-                )
-                previewBitmap?.let {
-                    Image(
-                        bitmap = it.asImageBitmap(),
-                        contentDescription = null,
-                        modifier = Modifier
-                            .align(Alignment.BottomStart)
-                            .padding(8.dp)
-                            .size(96.dp),
-                    )
-                }
-            }
-
-            Column(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight(),
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-            ) {
-                Text(status, style = MaterialTheme.typography.bodyLarge)
-                Text(
-                    "Modo actual: ${LightMode.captureOrder.getOrNull(currentIndex)?.displayName ?: "—"}",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = Accent,
-                )
-                Text(
-                    if (controller.isOpen) {
-                        "MJ-008 LED: activo (${detection.cameraVariant.name})"
-                    } else {
-                        "MJ-008 LED: no disponible — captura de cámara igual"
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Ink.copy(alpha = 0.55f),
-                )
-                OutlinedTextField(
-                    value = moistureText,
-                    onValueChange = { moistureText = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
-                    label = { Text("Humedad % (opcional, lápiz)") },
-                    modifier = Modifier.fillMaxWidth(),
-                    singleLine = true,
-                    shape = RoundedCornerShape(4.dp),
-                )
-                Spacer(Modifier.weight(1f))
-                if (capturing) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        CircularProgressIndicator(modifier = Modifier.size(28.dp), color = Accent)
-                        Spacer(Modifier.width(10.dp))
-                        Text("Capturando 8 espectros…")
-                    }
-                } else {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                capturing = true
-                                try {
-                                    val dir = File(context.cacheDir, "captures").apply { mkdirs() }
-                                    for ((index, mode) in LightMode.captureOrder.withIndex()) {
-                                        currentIndex = index
-                                        status = "Luz ${index + 1}/8: ${mode.displayName}. Mantenga los ojos cerrados."
-                                        if (mode.hardwareChannel != null) {
-                                            withContext(Dispatchers.IO) {
-                                                controller.applyLightMode(mode)
-                                            }
-                                            delay(350)
-                                            val file = File(dir, "${mode.shortName}_${System.currentTimeMillis()}.jpg")
-                                            val bmp = takePicture(imageCapture, cameraExecutor, file)
-                                            captured[mode.shortName] = file.absolutePath to bmp
-                                            previewBitmap = bmp
-                                        } else {
-                                            // Derived maps created later in analysis from UV/Wood/White
-                                            status = "Preparando mapa ${mode.displayName}…"
-                                            delay(120)
-                                        }
-                                    }
-                                    withContext(Dispatchers.IO) { controller.turnOff() }
-                                    status = "Captura completa. Analizando…"
-                                    val paths = captured.mapValues { it.value.first }
-                                    val moisture = moistureText.toFloatOrNull()
-                                    onFinished(paths, moisture)
-                                } catch (e: Exception) {
-                                    status = "Error: ${e.message}"
-                                    Log.e("Capture", "sequence failed", e)
-                                } finally {
-                                    capturing = false
-                                }
+                                if (!bound) Log.e("Capture", "No camera could be bound")
+                            } catch (e: Exception) {
+                                Log.e("Capture", "camera provider error", e)
                             }
-                        },
-                        enabled = hasCamPermission && patient != null,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                        shape = RoundedCornerShape(4.dp),
-                    ) {
-                        Icon(Icons.Outlined.CameraAlt, null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Iniciar análisis inteligente")
-                    }
-                }
+                        }, ContextCompat.getMainExecutor(ctx))
+                        previewView
+                    },
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Text(
+                    "Se requiere permiso de cámara",
+                    color = Paper,
+                    modifier = Modifier.align(Alignment.Center),
+                )
+            }
+            Box(
+                Modifier
+                    .width(1.dp)
+                    .fillMaxSize()
+                    .align(Alignment.Center)
+                    .background(Paper.copy(alpha = 0.4f)),
+            )
+            previewBitmap?.let {
+                Image(
+                    bitmap = it.asImageBitmap(),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(8.dp)
+                        .size(72.dp),
+                )
             }
         }
 
         Spacer(Modifier.height(10.dp))
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            items(LightMode.captureOrder) { mode ->
-                val shot = captured[mode.shortName]
-                Column(
-                    Modifier
-                        .width(88.dp)
-                        .background(Cream, RoundedCornerShape(4.dp))
-                        .border(
-                            1.dp,
-                            if (shot != null) Accent else Ink.copy(alpha = 0.15f),
-                            RoundedCornerShape(4.dp),
-                        )
-                        .padding(6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                ) {
-                    if (shot?.second != null) {
-                        Image(
-                            bitmap = shot.second!!.asImageBitmap(),
-                            contentDescription = mode.shortName,
-                            modifier = Modifier
-                                .size(70.dp)
-                                .background(Ink),
-                        )
-                    } else {
-                        Box(
-                            Modifier
-                                .size(70.dp)
-                                .background(Ink.copy(alpha = 0.08f)),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Text(mode.shortName.take(3), style = MaterialTheme.typography.labelLarge)
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            Text(status, style = MaterialTheme.typography.bodyLarge)
+            Text(
+                "Modo: ${LightMode.captureOrder.getOrNull(currentIndex)?.displayName ?: "—"}",
+                style = MaterialTheme.typography.titleLarge,
+                color = Accent,
+            )
+            Text(
+                if (controller.isOpen) {
+                    "MJ-008 LED: activo (${detection?.cameraVariant?.name ?: "—"})"
+                } else {
+                    "MJ-008 LED: no disponible — captura igual"
+                },
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.55f),
+            )
+            OutlinedTextField(
+                value = moistureText,
+                onValueChange = { moistureText = it.filter { c -> c.isDigit() || c == '.' }.take(5) },
+                label = { Text("Humedad % (opcional)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(4.dp),
+            )
+            if (capturing) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    CircularProgressIndicator(modifier = Modifier.size(28.dp), color = Accent)
+                    Spacer(Modifier.width(10.dp))
+                    Text("Capturando espectros…")
+                }
+            } else {
+                Button(
+                    onClick = {
+                        scope.launch {
+                            capturing = true
+                            try {
+                                val dir = File(context.cacheDir, "captures").apply { mkdirs() }
+                                for ((index, mode) in LightMode.captureOrder.withIndex()) {
+                                    currentIndex = index
+                                    status = "Luz ${index + 1}/8: ${mode.displayName}"
+                                    if (mode.hardwareChannel != null) {
+                                        withContext(Dispatchers.IO) {
+                                            controller.applyLightMode(mode)
+                                        }
+                                        delay(350)
+                                        val file = File(dir, "${mode.shortName}_${System.currentTimeMillis()}.jpg")
+                                        val bmp = takePicture(imageCapture, cameraExecutor, file)
+                                        if (bmp != null || file.exists()) {
+                                            captured[mode.shortName] = file.absolutePath to bmp
+                                            previewBitmap = bmp
+                                        } else {
+                                            status = "No se pudo capturar ${mode.shortName}"
+                                        }
+                                    } else {
+                                        delay(80)
+                                    }
+                                }
+                                withContext(Dispatchers.IO) { runCatching { controller.turnOff() } }
+                                if (captured.isEmpty()) {
+                                    status = "Sin imágenes. Revisar cámara y permisos."
+                                } else {
+                                    status = "Captura completa. Analizando…"
+                                    onFinished(captured.mapValues { it.value.first }, moistureText.toFloatOrNull())
+                                }
+                            } catch (e: Exception) {
+                                status = "Error: ${e.message}"
+                                Log.e("Capture", "sequence failed", e)
+                            } finally {
+                                capturing = false
+                            }
                         }
-                    }
-                    Text(mode.shortName, style = MaterialTheme.typography.labelLarge)
+                    },
+                    enabled = hasCamPermission && patient != null,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(52.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                    shape = RoundedCornerShape(4.dp),
+                ) {
+                    Icon(Icons.Outlined.CameraAlt, null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Iniciar análisis")
                 }
             }
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(LightMode.captureOrder) { mode ->
+                    val shot = captured[mode.shortName]
+                    Column(
+                        Modifier
+                            .width(76.dp)
+                            .background(Cream, RoundedCornerShape(4.dp))
+                            .border(
+                                1.dp,
+                                if (shot != null) Accent else Ink.copy(alpha = 0.15f),
+                                RoundedCornerShape(4.dp),
+                            )
+                            .padding(4.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        if (shot?.second != null) {
+                            Image(
+                                bitmap = shot.second!!.asImageBitmap(),
+                                contentDescription = mode.shortName,
+                                modifier = Modifier
+                                    .size(60.dp)
+                                    .background(Ink),
+                            )
+                        } else {
+                            Box(
+                                Modifier
+                                    .size(60.dp)
+                                    .background(Ink.copy(alpha = 0.08f)),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Text(mode.shortName.take(3), style = MaterialTheme.typography.labelLarge)
+                            }
+                        }
+                        Text(mode.shortName, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+            Spacer(Modifier.height(8.dp))
         }
     }
 }
@@ -378,19 +385,24 @@ private suspend fun takePicture(
     executor: ExecutorService,
     file: File,
 ): Bitmap? = suspendCoroutine { cont ->
-    val options = ImageCapture.OutputFileOptions.Builder(file).build()
-    imageCapture.takePicture(
-        options,
-        executor,
-        object : ImageCapture.OnImageSavedCallback {
-            override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
-                val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath)
-                cont.resume(bmp)
-            }
+    try {
+        val options = ImageCapture.OutputFileOptions.Builder(file).build()
+        imageCapture.takePicture(
+            options,
+            executor,
+            object : ImageCapture.OnImageSavedCallback {
+                override fun onImageSaved(outputFileResults: ImageCapture.OutputFileResults) {
+                    cont.resume(android.graphics.BitmapFactory.decodeFile(file.absolutePath))
+                }
 
-            override fun onError(exception: ImageCaptureException) {
-                cont.resume(null)
-            }
-        },
-    )
+                override fun onError(exception: ImageCaptureException) {
+                    Log.e("Capture", "takePicture", exception)
+                    cont.resume(null)
+                }
+            },
+        )
+    } catch (e: Exception) {
+        Log.e("Capture", "takePicture setup", e)
+        cont.resume(null)
+    }
 }

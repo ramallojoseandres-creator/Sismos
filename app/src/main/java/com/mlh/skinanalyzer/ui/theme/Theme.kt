@@ -36,19 +36,19 @@ private val AppTypography = Typography(
     displayLarge = TextStyle(
         fontFamily = FontFamily.Serif,
         fontWeight = FontWeight.Bold,
-        fontSize = 42.sp,
-        lineHeight = 46.sp,
-        letterSpacing = (-0.5).sp,
+        fontSize = 30.sp,
+        lineHeight = 34.sp,
+        letterSpacing = (-0.3).sp,
     ),
     headlineLarge = TextStyle(
         fontFamily = FontFamily.Serif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 28.sp,
+        fontSize = 24.sp,
     ),
     headlineMedium = TextStyle(
         fontFamily = FontFamily.Serif,
         fontWeight = FontWeight.SemiBold,
-        fontSize = 22.sp,
+        fontSize = 20.sp,
     ),
     titleLarge = TextStyle(
         fontFamily = FontFamily.SansSerif,

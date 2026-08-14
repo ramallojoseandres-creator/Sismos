@@ -89,8 +89,17 @@ object Mj008Hardware {
 
     fun detect(context: Context): Detection {
         val serial = File(SERIAL_DEVICE)
-        val serialPresent = serial.exists()
-        val serialWritable = serialPresent && (serial.canWrite() || tryWriteProbe(serial))
+        val serialPresent = try {
+            serial.exists()
+        } catch (_: Exception) {
+            false
+        }
+        // Never open ttyS4 just to probe — that can native-crash on some MJ firmwares.
+        val serialWritable = try {
+            serialPresent && serial.canWrite()
+        } catch (_: Exception) {
+            false
+        }
         val usb = listUsbCameras(context)
         val variant = resolveVariant(usb.map { it.second })
         val model = Build.MODEL.orEmpty()
@@ -100,7 +109,7 @@ object Mj008Hardware {
             append(
                 when {
                     serialWritable -> "OK ($SERIAL_DEVICE)"
-                    serialPresent -> "presente sin permiso ($SERIAL_DEVICE)"
+                    serialPresent -> "presente ($SERIAL_DEVICE)"
                     else -> "no encontrado"
                 },
             )
@@ -137,19 +146,11 @@ object Mj008Hardware {
 
     private fun listUsbCameras(context: Context): List<Pair<UsbDevice, Int>> {
         return try {
-            val manager = context.getSystemService(Context.USB_SERVICE) as UsbManager
+            val manager = context.getSystemService(Context.USB_SERVICE) as? UsbManager
+                ?: return emptyList()
             manager.deviceList.values.map { it to it.productId }
         } catch (_: Exception) {
             emptyList()
-        }
-    }
-
-    private fun tryWriteProbe(file: File): Boolean {
-        return try {
-            file.outputStream().use { }
-            true
-        } catch (_: Exception) {
-            false
         }
     }
 }

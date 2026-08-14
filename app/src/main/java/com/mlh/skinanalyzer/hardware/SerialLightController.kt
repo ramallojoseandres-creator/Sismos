@@ -152,10 +152,14 @@ class SerialLightController(
     }
 
     fun turnOff() {
-        if (usingLegacyBinary) {
-            sendLegacyBinary(0x10, 0x00)
-        } else {
-            sendRawText(CMD_OFF)
+        try {
+            if (usingLegacyBinary) {
+                sendLegacyBinary(0x10, 0x00)
+            } else {
+                sendRawText(CMD_OFF)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "turnOff failed", e)
         }
     }
 
@@ -182,27 +186,31 @@ class SerialLightController(
         sendRawText("$prefix$p%")
     }
 
-    /** Apply MJ-008 spectral group with OEM intensity curve for the detected camera. */
     fun applyLightMode(mode: LightMode) {
         if (mode.hardwareChannel == null) return
-        val p = activePreset
-        turnOff()
-        Thread.sleep(80)
-        when (mode) {
-            LightMode.WHITE -> setCenterChannel(1, p.whiteCenter)
-            LightMode.XPL -> {
-                setCenterChannel(1, p.xplWhiteFill)
-                setCenterChannel(2, p.xplCenter)
+        try {
+            val p = activePreset
+            turnOff()
+            Thread.sleep(80)
+            when (mode) {
+                LightMode.WHITE -> setCenterChannel(1, p.whiteCenter)
+                LightMode.XPL -> {
+                    setCenterChannel(1, p.xplWhiteFill)
+                    setCenterChannel(2, p.xplCenter)
+                }
+                LightMode.PPL -> {
+                    setCenterChannel(2, p.pplNegFill)
+                    setCenterChannel(3, p.pplCenter)
+                }
+                LightMode.WOODS -> setCenterChannel(4, p.woodsCenter)
+                LightMode.UV -> setCenterChannel(5, p.uvCenter)
+                else -> Unit
             }
-            LightMode.PPL -> {
-                setCenterChannel(2, p.pplNegFill)
-                setCenterChannel(3, p.pplCenter)
-            }
-            LightMode.WOODS -> setCenterChannel(4, p.woodsCenter)
-            LightMode.UV -> setCenterChannel(5, p.uvCenter)
-            else -> Unit
+            Thread.sleep(140)
+        } catch (e: Exception) {
+            Log.e(TAG, "applyLightMode failed", e)
+            lastError = e.message
         }
-        Thread.sleep(140)
     }
 
     fun sendLegacyBinary(cmd: Byte, arg: Byte) {
@@ -215,16 +223,21 @@ class SerialLightController(
     }
 
     private fun writeBytes(data: ByteArray) {
-        val holder = fdHolder
-        if (holder != null) {
-            try {
-                holder.javaClass.getMethod("sendBytes", ByteArray::class.java).invoke(holder, data)
-                return
-            } catch (_: Exception) {
+        try {
+            val holder = fdHolder
+            if (holder != null) {
+                try {
+                    holder.javaClass.getMethod("sendBytes", ByteArray::class.java).invoke(holder, data)
+                    return
+                } catch (_: Exception) {
+                }
             }
+            outputStream?.write(data)
+            outputStream?.flush()
+        } catch (e: Exception) {
+            Log.e(TAG, "writeBytes failed", e)
+            lastError = e.message
         }
-        outputStream?.write(data)
-        outputStream?.flush()
     }
 
     companion object {

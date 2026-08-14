@@ -3,12 +3,12 @@ package com.mlh.skinanalyzer.ui.screens
 import android.graphics.BitmapFactory
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
@@ -35,6 +36,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -76,7 +78,7 @@ fun ReportScreen(
     var patient by remember { mutableStateOf<Patient?>(null) }
     var result by remember { mutableStateOf<SkinAnalysisResult?>(null) }
     var images by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var tab by remember { mutableStateOf(0) } // 0 resumen, 1 superficial, 2 profunda
+    var tab by remember { mutableIntStateOf(0) }
 
     LaunchedEffect(sessionId) {
         val s = vm.getSession(sessionId) ?: return@LaunchedEffect
@@ -119,53 +121,66 @@ fun ReportScreen(
                     color = Ink.copy(alpha = 0.55f),
                 )
             }
+        }
+        Row(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             OutlinedButton(
                 onClick = {
                     scope.launch {
-                        val (text, pdf) = withContext(Dispatchers.IO) {
-                            vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt)
+                        runCatching {
+                            val (text, pdf) = withContext(Dispatchers.IO) {
+                                vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt)
+                            }
+                            ReportSharer.shareEmail(
+                                context,
+                                subject = "Informe de piel — ${p.name} · Dra. MLH",
+                                body = text,
+                                pdf = pdf,
+                                toEmail = p.email.ifBlank { null },
+                            )
                         }
-                        ReportSharer.shareEmail(
-                            context,
-                            subject = "Informe de piel — ${p.name} · Dra. MLH",
-                            body = text,
-                            pdf = pdf,
-                            toEmail = p.email.ifBlank { null },
-                        )
                     }
                 },
+                modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(4.dp),
             ) {
                 Icon(Icons.Outlined.Email, null)
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(4.dp))
                 Text("Email")
             }
-            Spacer(Modifier.width(8.dp))
             Button(
                 onClick = {
                     scope.launch {
-                        val (text, pdf) = withContext(Dispatchers.IO) {
-                            vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt)
+                        runCatching {
+                            val (text, pdf) = withContext(Dispatchers.IO) {
+                                vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt)
+                            }
+                            ReportSharer.shareWhatsAppBusiness(
+                                context,
+                                body = text.take(900),
+                                pdf = pdf,
+                                phoneE164 = p.phone.ifBlank { null },
+                            )
                         }
-                        ReportSharer.shareWhatsAppBusiness(
-                            context,
-                            body = text.take(900),
-                            pdf = pdf,
-                            phoneE164 = p.phone.ifBlank { null },
-                        )
                     }
                 },
+                modifier = Modifier.weight(1f),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
                 shape = RoundedCornerShape(4.dp),
             ) {
                 Icon(Icons.Outlined.Share, null)
-                Spacer(Modifier.width(6.dp))
-                Text("WhatsApp Business")
+                Spacer(Modifier.width(4.dp))
+                Text("WhatsApp")
             }
         }
 
-        Spacer(Modifier.height(8.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Spacer(Modifier.height(10.dp))
+        Row(
+            Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             listOf("Resumen", "Superficial", "Profunda").forEachIndexed { i, label ->
                 val selected = tab == i
                 Button(
@@ -180,16 +195,53 @@ fun ReportScreen(
         }
         Spacer(Modifier.height(10.dp))
 
-        Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Column(
-                Modifier
-                    .weight(1.1f)
-                    .fillMaxHeight()
-                    .background(Cream, RoundedCornerShape(4.dp))
-                    .padding(14.dp),
-            ) {
-                when (tab) {
-                    0 -> {
+        if (images.isNotEmpty()) {
+            Text("Imágenes espectrales", style = MaterialTheme.typography.titleLarge)
+            Spacer(Modifier.height(6.dp))
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                items(images.entries.toList()) { (name, path) ->
+                    val bmp = remember(path) {
+                        runCatching { BitmapFactory.decodeFile(path) }.getOrNull()
+                    }
+                    Column(
+                        Modifier
+                            .width(100.dp)
+                            .background(Cream, RoundedCornerShape(4.dp))
+                            .padding(6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                    ) {
+                        if (bmp != null) {
+                            Image(
+                                bitmap = bmp.asImageBitmap(),
+                                contentDescription = name,
+                                modifier = Modifier
+                                    .size(88.dp)
+                                    .background(Ink),
+                            )
+                        } else {
+                            Box(
+                                Modifier
+                                    .size(88.dp)
+                                    .background(Ink.copy(alpha = 0.1f)),
+                            )
+                        }
+                        Text(name, style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+
+        Column(
+            Modifier
+                .weight(1f)
+                .fillMaxWidth()
+                .background(Cream, RoundedCornerShape(4.dp))
+                .padding(12.dp),
+        ) {
+            when (tab) {
+                0 -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    item {
                         Text("Tipo de piel: ${r.skinType}", style = MaterialTheme.typography.titleLarge)
                         Text("Edad cutánea: ${r.skinAge} años", style = MaterialTheme.typography.titleLarge, color = Accent)
                         s.moisturePercent?.let {
@@ -203,53 +255,9 @@ fun ReportScreen(
                         Spacer(Modifier.height(8.dp))
                         Text(r.facialRatioNote, style = MaterialTheme.typography.bodyMedium, color = Ink.copy(alpha = 0.6f))
                     }
-                    1 -> MetricList(r.metrics.filter { it.layer == "superficial" })
-                    else -> MetricList(r.metrics.filter { it.layer == "profunda" })
                 }
-            }
-
-            Column(
-                Modifier
-                    .weight(0.9f)
-                    .fillMaxHeight(),
-            ) {
-                Text("Imágenes espectrales", style = MaterialTheme.typography.titleLarge)
-                Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    items(images.entries.toList()) { (name, path) ->
-                        val bmp = remember(path) { BitmapFactory.decodeFile(path) }
-                        Column(
-                            Modifier
-                                .width(120.dp)
-                                .background(Cream, RoundedCornerShape(4.dp))
-                                .padding(6.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally,
-                        ) {
-                            if (bmp != null) {
-                                Image(
-                                    bitmap = bmp.asImageBitmap(),
-                                    contentDescription = name,
-                                    modifier = Modifier
-                                        .size(108.dp)
-                                        .background(Ink),
-                                )
-                            } else {
-                                Box(
-                                    Modifier
-                                        .size(108.dp)
-                                        .background(Ink.copy(alpha = 0.1f)),
-                                )
-                            }
-                            Text(name, style = MaterialTheme.typography.labelLarge)
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "Niveles de cuidado: 1 verde (leve) → 5 rojo (grave).",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Ink.copy(alpha = 0.55f),
-                )
+                1 -> MetricList(r.metrics.filter { it.layer == "superficial" })
+                else -> MetricList(r.metrics.filter { it.layer == "profunda" })
             }
         }
     }
@@ -305,7 +313,7 @@ fun SessionListScreen(
         Modifier
             .fillMaxSize()
             .background(Paper)
-            .padding(20.dp),
+            .padding(16.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) {
@@ -313,40 +321,40 @@ fun SessionListScreen(
             }
             Text(
                 "Historial · ${patient?.name ?: ""}",
-                style = MaterialTheme.typography.headlineLarge,
+                style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.weight(1f),
             )
-            Button(
-                onClick = onNew,
-                colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                shape = RoundedCornerShape(4.dp),
-            ) { Text("Nuevo análisis") }
         }
+        Button(
+            onClick = onNew,
+            modifier = Modifier.fillMaxWidth(),
+            colors = ButtonDefaults.buttonColors(containerColor = Accent),
+            shape = RoundedCornerShape(4.dp),
+        ) { Text("Nuevo análisis") }
         Spacer(Modifier.height(12.dp))
         if (sessions.isEmpty()) {
             Text("Sin análisis previos.", color = Ink.copy(alpha = 0.55f))
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                items(sessions) { s ->
-                    Row(
+                items(sessions) { sessionItem ->
+                    Column(
                         Modifier
                             .fillMaxWidth()
                             .background(Cream, RoundedCornerShape(4.dp))
                             .padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES")).format(Date(s.createdAt)),
-                                style = MaterialTheme.typography.titleLarge,
-                            )
-                            Text(
-                                "${s.skinType} · edad cutánea ${s.skinAge}",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                        }
+                        Text(
+                            SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES")).format(Date(sessionItem.createdAt)),
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                        Text(
+                            "${sessionItem.skinType} · edad cutánea ${sessionItem.skinAge}",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Spacer(Modifier.height(8.dp))
                         Button(
-                            onClick = { onOpen(s.id) },
+                            onClick = { onOpen(sessionItem.id) },
+                            modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = Accent),
                             shape = RoundedCornerShape(4.dp),
                         ) { Text("Ver informe") }

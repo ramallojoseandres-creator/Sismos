@@ -7,17 +7,18 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.provider.MediaStore
+import android.util.Log
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
-import com.mlh.skinanalyzer.MlhApp
 import com.mlh.skinanalyzer.analysis.ReportGenerator
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
 import com.mlh.skinanalyzer.analysis.SkinAnalyzer
 import com.mlh.skinanalyzer.data.AnalysisSession
+import com.mlh.skinanalyzer.data.AppDatabase
 import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.SerialLightController
@@ -28,8 +29,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
-    private val patientsDao = MlhApp.instance.patients
-    private val sessionsDao = MlhApp.instance.sessions
+    private val db = AppDatabase.get(app)
+    private val patientsDao = db.patientDao()
+    private val sessionsDao = db.sessionDao()
     private val gson = Gson()
 
     var patients by mutableStateOf<List<Patient>>(emptyList())
@@ -47,22 +49,29 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     init {
         viewModelScope.launch {
-            patientsDao.observeAll().collectLatest { patients = it }
+            runCatching {
+                patientsDao.observeAll().collectLatest { patients = it }
+            }.onFailure { Log.e("MLH", "patients flow", it) }
         }
         refreshHardware()
     }
 
     fun refreshHardware() {
         viewModelScope.launch(Dispatchers.IO) {
-            val detection = Mj008Hardware.detect(getApplication())
-            mj008Detection = detection
-            lightController.setCameraVariant(detection.cameraVariant)
-            val ok = lightController.open()
-            hardwareStatus = if (ok) {
-                "MJ-008 listo · LED ${if (lightController.usingLegacyBinary) "legacy 9600" else "115200"} · cámara ${detection.cameraVariant.name}"
-            } else {
-                detection.summary + " · " +
-                    (lightController.lastError ?: "LED no conectado; captura de cámara disponible")
+            runCatching {
+                val detection = Mj008Hardware.detect(getApplication())
+                mj008Detection = detection
+                lightController.setCameraVariant(detection.cameraVariant)
+                val ok = lightController.open()
+                hardwareStatus = if (ok) {
+                    "MJ-008 listo · LED ${if (lightController.usingLegacyBinary) "legacy 9600" else "115200"} · cámara ${detection.cameraVariant.name}"
+                } else {
+                    detection.summary + " · " +
+                        (lightController.lastError ?: "LED no conectado; captura disponible")
+                }
+            }.onFailure {
+                Log.e("MLH", "refreshHardware", it)
+                hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
             }
         }
     }
