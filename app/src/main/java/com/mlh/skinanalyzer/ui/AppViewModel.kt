@@ -101,6 +101,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Gushang SkinDetect license status (updated from Application + refresh). */
     var gushangLicenseStatus by mutableStateOf(GushangLicense.lastMessage)
         private set
+    var gushangNeedsRestart by mutableStateOf(GushangLicense.needsAppRestart)
+        private set
     var gushangActivated by mutableStateOf(false)
         private set
 
@@ -249,6 +251,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             gushangActivated = ok
             gushangLicenseStatus = GushangLicense.lastMessage
+            gushangNeedsRestart = GushangLicense.needsAppRestart
         }
     }
 
@@ -561,6 +564,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 gushangActivated = GushangLicense.isActivated
                 gushangLicenseStatus = GushangLicense.lastMessage
+                gushangNeedsRestart = GushangLicense.needsAppRestart
 
                 val result: SkinAnalysisResult
                 val pathsOut: Map<String, String>

@@ -34,14 +34,12 @@ enum class LightMode(
         val captureOrder = listOf(WHITE, XPL, PPL, WOODS, UV, BLUE, ORANGE, RED)
         val hardwareOrder = captureOrder
 
-        /** OEM: white light message 1008 delayed 1000ms after startPreview. */
+        /** Defaults — override via [CapturePrefs] in Ajustes. */
         const val WHITE_LIGHT_DELAY_MS = 1_000L
-        /** [MaokinLightController.DELAY_FIRST_SHOT] — light on → first still. */
-        const val SETTLE_FIRST_MS = MaokinLightController.DELAY_FIRST_SHOT
-        /** [MaokinLightController.DELAY_BETWEEN] — light on → still (after first). */
-        const val SETTLE_BETWEEN_MS = MaokinLightController.DELAY_BETWEEN
-        /** [MaokinLightController.DELAY_AFTER_SHOT] — after still → next light. */
-        const val SETTLE_AFTER_SHOT_MS = MaokinLightController.DELAY_AFTER_SHOT
+        const val SETTLE_FIRST_MS = CapturePrefs.DEFAULT_SETTLE_FIRST_MS
+        const val SETTLE_BETWEEN_MS = CapturePrefs.DEFAULT_SETTLE_BETWEEN_MS
+        const val SETTLE_AFTER_SHOT_MS = CapturePrefs.DEFAULT_SETTLE_AFTER_MS
+        const val PRE_FIRST_MS = CapturePrefs.DEFAULT_PRE_FIRST_MS
     }
 }
 

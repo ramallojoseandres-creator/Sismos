@@ -73,6 +73,7 @@ import com.mlh.skinanalyzer.BuildConfig
 import com.mlh.skinanalyzer.analysis.DemoFrameGenerator
 import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.hardware.CapturePrefs
 import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
 import com.mlh.skinanalyzer.hardware.Mj008UsbDevices
@@ -93,6 +94,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import java.io.File
+import android.os.SystemClock
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.coroutines.cancellation.CancellationException
@@ -637,15 +639,22 @@ fun CaptureScreen(
                                 }
                                 val total = LightMode.captureOrder.size
                                 val preferLiveCam = demoMode && hasCamPermission && cameraXBound
+                                val settleFirst = CapturePrefs.settleFirstMs(context)
+                                val settleBetween = CapturePrefs.settleBetweenMs(context)
+                                val settleAfter = CapturePrefs.settleAfterMs(context)
+                                val preFirst = CapturePrefs.preFirstMs(context)
+                                val seqStart = SystemClock.elapsedRealtime()
+                                if (!demoMode && useUvc && uvcSession != null && preFirst > 0) {
+                                    status = "Acomode el rostro en el mentonera…"
+                                    captureBanner = "Mantén los ojos cerrados y la cara apoyada"
+                                    delay(preFirst)
+                                }
                                 for ((index, mode) in LightMode.captureOrder.withIndex()) {
                                     if (!isActive) return@launch
                                     currentIndex = index
                                     val n = index + 1
-                                    captureBanner = if (n < total) {
-                                        "Capturando, por favor espere…"
-                                    } else {
-                                        "Capturando última imagen…"
-                                    }
+                                    captureBanner =
+                                        "${mode.displayName} — $n de $total · Mantén los ojos cerrados y la cara apoyada"
                                     status = if (demoMode) {
                                         "Demo $n/$total · ${mode.displayName}"
                                     } else {
@@ -668,20 +677,15 @@ fun CaptureScreen(
                                         }
                                         useUvc && uvcSession != null -> {
                                             val session = uvcSession!!
-                                            // Luces + cámara: misma UsbDeviceConnection (Maokin).
-                                            // Nunca controller USB-XU / segundo openDevice aquí.
                                             withContext(Dispatchers.IO) {
                                                 session.applyLightMode(mode)
                                             }
-                                            delay(
-                                                if (index == 0) LightMode.SETTLE_FIRST_MS
-                                                else LightMode.SETTLE_BETWEEN_MS,
-                                            )
+                                            delay(if (index == 0) settleFirst else settleBetween)
                                             val still = withContext(Dispatchers.IO) {
                                                 session.captureStill(oemFile)
                                             }
                                             if (index < total - 1) {
-                                                delay(LightMode.SETTLE_AFTER_SHOT_MS)
+                                                delay(settleAfter)
                                             }
                                             still
                                         }
@@ -689,10 +693,7 @@ fun CaptureScreen(
                                             withContext(Dispatchers.IO) {
                                                 controller.applyLightMode(mode)
                                             }
-                                            delay(
-                                                if (index == 0) LightMode.SETTLE_FIRST_MS
-                                                else LightMode.SETTLE_BETWEEN_MS,
-                                            )
+                                            delay(if (index == 0) settleFirst else settleBetween)
                                             takePicture(imageCapture, cameraExecutor, oemFile)
                                         }
                                     }
@@ -703,6 +704,8 @@ fun CaptureScreen(
                                         status = "No se pudo capturar ${mode.displayName}"
                                     }
                                 }
+                                val seqMs = SystemClock.elapsedRealtime() - seqStart
+                                Log.i("Capture", "sequence total ${seqMs}ms for $total lights")
                                 if (!isActive) return@launch
                                 withContext(Dispatchers.IO) {
                                     when {
@@ -721,11 +724,17 @@ fun CaptureScreen(
                                         val missing = LightMode.captureOrder
                                             .filter { it.shortName !in captured }
                                             .joinToString { it.displayName }
-                                        status = "Faltan ${total - captured.size} luces: $missing. Reintente."
+                                        status =
+                                            "Captura incompleta (${captured.size}/$total · ${seqMs}ms). " +
+                                                "Faltan: $missing. Reintente."
                                     }
                                     else -> {
                                         captureBanner = "Escaneo finalizado"
-                                        status = if (demoMode) "Demo: 8 espectros listos" else "8 espectros listos"
+                                        status = if (demoMode) {
+                                            "Demo: 8 espectros listos (${seqMs}ms)"
+                                        } else {
+                                            "8 espectros listos (${seqMs}ms)"
+                                        }
                                         delay(900)
                                         captureBanner = "Analizando, por favor espere…"
                                         status = "Generando mapas e informe…"

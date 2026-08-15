@@ -111,6 +111,7 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                     onOpenDiagnostic = { nav.navigate(Routes.DIAGNOSTIC) },
                     onOpenLightTest = { nav.navigate(Routes.LIGHT_TEST) },
                     gushangLicenseStatus = vm.gushangLicenseStatus,
+                    gushangNeedsRestart = vm.gushangNeedsRestart,
                     onRefreshGushang = { vm.refreshGushangStatus() },
                 )
             }

@@ -17,7 +17,9 @@ import com.serenegiant.usbcameracommon.UVCCameraHandler
 import com.serenegiant.widget.CameraViewInterface
 import com.serenegiant.widget.UVCCameraTextureView
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -157,11 +159,11 @@ class Mj008UvcSession(
                     UVCCameraHandler.createHandler(
                         activity,
                         view,
-                        2,
+                        /* encoderType */ 1,
                         Mj008Hardware.PREVIEW_WIDTH,
                         Mj008Hardware.PREVIEW_HEIGHT,
-                        1,
-                        Mj008Hardware.PREVIEW_ORIENTATION,
+                        /* pixelFormat */ 1,
+                        CapturePrefs.rotationDeg(activity),
                     ),
                 )
             } catch (e: Exception) {
@@ -589,19 +591,63 @@ class Mj008UvcSession(
         }
     }
 
+    /**
+     * Captura still sin pasar por SoundPool del OEM (NPE en CameraThread si el pool
+     * no inicializó). Toma el bitmap del TextureView, aplica rotación/espejo de
+     * [CapturePrefs] y escribe el JPEG a disco — es lo que lee Gushang.
+     */
     suspend fun captureStill(target: File): Bitmap? {
-        val handler = cameraHandler ?: return null
         if (!previewReady.get()) return null
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
-        handler.captureStill(target.absolutePath)
-        repeat(40) {
-            delay(100)
-            if (target.exists() && target.length() > 10_000) {
-                return BitmapFactory.decodeFile(target.absolutePath)
-            }
+
+        val raw = withContext(kotlinx.coroutines.Dispatchers.Main) {
+            val view = previewView
+            val fromGl = runCatching { view?.captureStillImage() }.getOrNull()
+            fromGl ?: runCatching { view?.bitmap }.getOrNull()
         }
-        return if (target.exists()) BitmapFactory.decodeFile(target.absolutePath) else null
+
+        if (raw != null) {
+            val rotation = CapturePrefs.rotationDeg(activity)
+            val mirror = CapturePrefs.mirrorHorizontal(activity)
+            val oriented = CapturePrefs.transformBitmap(raw, rotation, mirror)
+            withContext(kotlinx.coroutines.Dispatchers.IO) {
+                target.outputStream().use { out ->
+                    oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+                }
+            }
+            Log.i(
+                TAG,
+                "captureStill OK ${target.name} ${target.length()} bytes " +
+                    "rot=$rotation mirror=$mirror ${oriented.width}x${oriented.height}",
+            )
+            return oriented
+        }
+
+        // Fallback OEM path — may NPE on SoundPool; isolate on our side.
+        val handler = cameraHandler ?: return null
+        return try {
+            handler.captureStill(target.absolutePath)
+            repeat(40) {
+                delay(100)
+                if (target.exists() && target.length() > 10_000) {
+                    val decoded = BitmapFactory.decodeFile(target.absolutePath) ?: return null
+                    val rotation = CapturePrefs.rotationDeg(activity)
+                    val mirror = CapturePrefs.mirrorHorizontal(activity)
+                    val oriented = CapturePrefs.transformBitmap(decoded, rotation, mirror)
+                    if (oriented !== decoded) {
+                        target.outputStream().use {
+                            oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it)
+                        }
+                    }
+                    return oriented
+                }
+            }
+            null
+        } catch (e: Exception) {
+            Log.e(TAG, "captureStill fallback failed", e)
+            null
+        }
     }
 
     /**

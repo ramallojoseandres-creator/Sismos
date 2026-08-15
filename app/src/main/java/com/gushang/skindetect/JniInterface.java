@@ -45,16 +45,14 @@ public class JniInterface {
     public static native float skinWhiteness(String str, String str2, byte[] bArr, int i, int i2);
 
     static {
-        // Full OEM chain (opencv ↔ xfeatures circular; HiAI/Paddle for Native).
+        // Only SkinDetect here — deps must already be preloaded by NativeLibraryLoader.
+        // Do not call ensureLoaded in a way that loads SkinDetect twice.
         try {
-            com.mlh.skinanalyzer.analysis.gushang.NativeLibraryLoader.ensureLoaded();
-        } catch (UnsatisfiedLinkError e) {
-            // Fallback minimal path if helper failed mid-way.
-            try { System.loadLibrary("opencv_java3"); } catch (UnsatisfiedLinkError ignored) {}
-            try { System.loadLibrary("xfeatures2d"); } catch (UnsatisfiedLinkError ignored) {}
-            System.loadLibrary("SkinDetect");
-            Log.e("gushang", "NativeLibraryLoader failed, minimal SkinDetect load", e);
+            com.mlh.skinanalyzer.analysis.gushang.NativeLibraryLoader.preloadDeps();
+        } catch (Throwable t) {
+            Log.e("gushang", "preloadDeps before SkinDetect", t);
         }
+        System.loadLibrary("SkinDetect");
         TAG = "gushang";
     }
 
