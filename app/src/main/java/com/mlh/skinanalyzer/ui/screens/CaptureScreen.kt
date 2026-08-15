@@ -92,6 +92,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -211,24 +212,32 @@ fun CaptureScreen(
         }
 
         try {
-            // Never await USB close here — it can hang forever on this tablet.
+            // Never await USB close / handler locks on Main — ANR on MJ-008.
             uvcLabel = "$usbSummary — abriendo sesión…"
-            val session = vm.prepareUvcSession(act)
+            yield()
+            val session = withContext(Dispatchers.Default) {
+                vm.prepareUvcSession(act)
+            }
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
-            delay(400) // brief settle while bg release runs; do not join it
-            uvcLabel = "$usbSummary — creando vista…"
-            withContext(Dispatchers.Main.immediate) {
+            delay(300) // settle while bg release runs; do not join it
+            uvcLabel = "$usbSummary — creando handler UVC…"
+            yield()
+            val bound = withContext(Dispatchers.Default) {
                 session.bindPreview(view)
             }
-            uvcLabel = "$usbSummary — conectando USB3.0…"
-            withContext(Dispatchers.Main.immediate) {
-                session.start()
+            if (!bound) {
+                uvcGiveUp = true
+                uvcLabel = "${session.statusLabel} — Demo o Reintentar."
+                return@LaunchedEffect
             }
+            uvcLabel = "$usbSummary — conectando USB3.0…"
+            yield()
+            session.start() // register/probe posted to USB I/O thread
             uvcSession = session
             uvcLabel = session.statusLabel
             Log.i("Capture", "UVC bind+start done: ${session.statusLabel}")
-            repeat(16) { // ~8s more polling (watchdog already at 8s total from start)
-                delay(500)
+            repeat(20) {
+                delay(400)
                 uvcLabel = session.statusLabel
                 if (session.isReady) {
                     uvcGiveUp = false

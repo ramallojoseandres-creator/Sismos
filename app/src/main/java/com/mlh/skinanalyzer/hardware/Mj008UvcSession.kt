@@ -19,15 +19,17 @@ import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
 /**
  * OEM UVC camera session for MJ-008 (1600×1200 @ 0° front) using Miaojing serenegiant stack.
- * Opens analyzer USB3.0 cam; if USB permission was already granted (no dialog), opens directly.
  *
- * USB open / UVC open run on a dedicated [usbIo] thread — never on the UI thread —
- * to avoid ANR while the MJ-008 firmware enumerates the camera.
+ * Critical on this tablet: never call into [UVCCameraHandler.isOpened] / [stopPreview] / [close]
+ * from the UI thread. Those take CameraThread locks or wait forever while native USB is stalled
+ * ([LIBUSB_TRANSFER_STALL]), which is the Captura ANR (“abriendo sesión…”).
  */
 class Mj008UvcSession(
     private val activity: Activity,
@@ -39,45 +41,48 @@ class Mj008UvcSession(
     private var ready = CompletableDeferred<Boolean>()
     private val started = AtomicBoolean(false)
     private val opening = AtomicBoolean(false)
+    private val released = AtomicBoolean(false)
     private val mainHandler = Handler(Looper.getMainLooper())
     private val usbThread = HandlerThread("mj008-uvc-io").also { it.start() }
     private val usbIo = Handler(usbThread.looper)
     private val openedDevice = AtomicReference<UsbDevice?>(null)
+
+    /** Set only from our code — never derived from handler.isOpened (that can deadlock). */
+    private val previewReady = AtomicBoolean(false)
+    private val cameraOpenFlag = AtomicBoolean(false)
+
     @Volatile private var lastOpenAttemptMs: Long = 0L
 
     @Volatile var lastStatus: String = "UVC: inactivo"
         private set
 
-    /** True after a successful LED command (white on open, or spectral during capture). */
     @Volatile var lightsOn: Boolean = false
         private set
 
     val isReady: Boolean
-        get() = cameraHandler?.isOpened == true && cameraHandler?.isPreviewing == true
+        get() = previewReady.get() && !released.get()
 
     val statusLabel: String
-        get() = when {
-            isReady && lightsOn -> {
-                val d = openedDevice.get()
-                val name = d?.let { UsbXuLightController.describe(it) } ?: "analizador"
-                "Cámara + luces ON · $name"
+        get() {
+            if (released.get()) return "UVC: liberada"
+            val d = openedDevice.get()
+            val name = d?.let { UsbXuLightController.describe(it) } ?: "analizador"
+            return when {
+                previewReady.get() && lightsOn -> "Cámara + luces ON · $name"
+                previewReady.get() -> "Cámara frontal · $name · encendiendo luces…"
+                cameraOpenFlag.get() -> "UVC abierta · iniciando preview…"
+                else -> lastStatus
             }
-            isReady -> {
-                val d = openedDevice.get()
-                val name = d?.let { UsbXuLightController.describe(it) } ?: "analizador"
-                "Cámara frontal · $name · encendiendo luces…"
-            }
-            else -> lastStatus
         }
 
     private val deviceListener = object : USBMonitor.OnDeviceConnectListener {
         override fun onAttach(device: UsbDevice?) {
-            if (device == null) return
+            if (device == null || released.get()) return
             if (!Mj008UsbDevices.isAnalyzerCamera(device)) {
                 Log.d(TAG, "Ignorando USB (no analizador): ${UsbXuLightController.describe(device)}")
                 return
             }
-            openOrRequest(device)
+            usbIo.post { openOrRequest(device) }
         }
 
         override fun onConnect(
@@ -85,19 +90,25 @@ class Mj008UvcSession(
             ctrlBlock: USBMonitor.UsbControlBlock?,
             createNew: Boolean,
         ) {
-            openPreview(device, ctrlBlock)
+            if (released.get()) return
+            usbIo.post { openPreviewOnUsbThread(device, ctrlBlock) }
         }
 
         override fun onDisconnect(device: UsbDevice?, ctrlBlock: USBMonitor.UsbControlBlock?) {
-            cameraHandler?.stopPreview()
+            // Do NOT call stopPreview/close here — they can wait forever on stalled USB.
+            previewReady.set(false)
+            cameraOpenFlag.set(false)
             openedDevice.set(null)
+            lightsOn = false
             lastStatus = "UVC: desconectada"
             completeReady(false)
         }
 
         override fun onDetach(device: UsbDevice?) {
-            cameraHandler?.close()
+            previewReady.set(false)
+            cameraOpenFlag.set(false)
             openedDevice.set(null)
+            lightsOn = false
             lastStatus = "UVC: detach"
             completeReady(false)
         }
@@ -105,50 +116,93 @@ class Mj008UvcSession(
         override fun onCancel(device: UsbDevice?) {
             lastStatus = "UVC: permiso USB denegado en el sistema"
             Log.w(TAG, lastStatus)
+            opening.set(false)
             completeReady(false)
         }
     }
 
-    fun bindPreview(view: UVCCameraTextureView) {
+    /**
+     * Create UVC handler off the UI thread. [UVCCameraHandler.createHandler] starts a
+     * CameraThread and [getHandler] waits — keep that wait off Main.
+     */
+    fun bindPreview(view: UVCCameraTextureView): Boolean {
+        if (released.get()) return false
         previewView = view
-        if (cameraHandler == null) {
-            // createHandler loads R.raw.camera_click (0x7f0e0000) via SoundPool —
-            // that raw file + public.xml ID pin must exist or this throws Resources.NotFoundException.
-            cameraHandler = UVCCameraHandler.createHandler(
-                activity,
-                view,
-                2,
-                Mj008Hardware.PREVIEW_WIDTH,
-                Mj008Hardware.PREVIEW_HEIGHT,
-                1,
-                Mj008Hardware.PREVIEW_ORIENTATION,
-            )
+        if (cameraHandler != null) return true
+        val latch = CountDownLatch(1)
+        val holder = AtomicReference<UVCCameraHandler?>()
+        val error = AtomicReference<String?>()
+        Thread({
+            try {
+                holder.set(
+                    UVCCameraHandler.createHandler(
+                        activity,
+                        view,
+                        2,
+                        Mj008Hardware.PREVIEW_WIDTH,
+                        Mj008Hardware.PREVIEW_HEIGHT,
+                        1,
+                        Mj008Hardware.PREVIEW_ORIENTATION,
+                    ),
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "createHandler failed", e)
+                error.set(e.message ?: e.javaClass.simpleName)
+            } finally {
+                latch.countDown()
+            }
+        }, "mj008-uvc-handler").apply { isDaemon = true; start() }
+
+        val ok = latch.await(4, TimeUnit.SECONDS)
+        if (!ok) {
+            lastStatus = "UVC: timeout creando handler (4s)"
+            Log.e(TAG, lastStatus)
+            return false
         }
+        val handler = holder.get()
+        if (handler == null) {
+            lastStatus = "UVC: handler null — ${error.get() ?: "error"}"
+            return false
+        }
+        cameraHandler = handler
+        return true
     }
 
     fun start() {
+        if (released.get()) return
         if (!started.compareAndSet(false, true)) {
-            probeAttachedDevices()
+            usbIo.post { probeAttachedDevices() }
             return
         }
         ready = CompletableDeferred()
+        previewReady.set(false)
+        cameraOpenFlag.set(false)
         lastStatus = "UVC: buscando cámara frontal USB3.0…"
-        if (usbMonitor == null) {
-            usbMonitor = USBMonitor(activity, deviceListener)
-            patchUsbPermissionIntent(usbMonitor!!)
+        // Entire USBMonitor lifecycle on usbIo — register() is synchronized and can
+        // block behind a hung destroy() of a previous session on another monitor,
+        // but at least Main stays alive for Demo / Reintentar.
+        usbIo.post {
+            if (released.get() || !started.get()) return@post
+            try {
+                if (usbMonitor == null) {
+                    usbMonitor = USBMonitor(activity, deviceListener)
+                    patchUsbPermissionIntent(usbMonitor!!)
+                }
+                mainHandler.post { runCatching { previewView?.onResume() } }
+                usbMonitor?.register()
+                lastStatus = "UVC: USBMonitor registrado — sondeando…"
+                probeAttachedDevices()
+                usbIo.postDelayed({ if (!released.get()) probeAttachedDevices() }, 800)
+                usbIo.postDelayed({ if (!released.get()) probeAttachedDevices() }, 2_000)
+                usbIo.postDelayed({ if (!released.get()) probeAttachedDevices() }, 4_500)
+            } catch (e: Exception) {
+                Log.e(TAG, "start/register", e)
+                lastStatus = "UVC register: ${e.message}"
+                opening.set(false)
+            }
         }
-        previewView?.onResume()
-        usbMonitor?.register()
-        mainHandler.postDelayed({ probeAttachedDevices() }, 200)
-        mainHandler.postDelayed({ probeAttachedDevices() }, 1000)
-        mainHandler.postDelayed({ probeAttachedDevices() }, 2500)
-        mainHandler.postDelayed({ probeAttachedDevices() }, 5000)
     }
 
-    /**
-     * OEM USBMonitor.register() builds PendingIntent with flags=0 — illegal on API 31+.
-     * Pre-install a mutable PendingIntent so register() skips creation.
-     */
     private fun patchUsbPermissionIntent(monitor: USBMonitor) {
         try {
             val actionField = USBMonitor::class.java.getDeclaredField("ACTION_USB_PERMISSION")
@@ -175,18 +229,21 @@ class Mj008UvcSession(
     }
 
     fun retryConnect() {
+        if (released.get()) return
         ready = CompletableDeferred()
         opening.set(false)
+        previewReady.set(false)
+        cameraOpenFlag.set(false)
         lastStatus = "UVC: reintentando cámara frontal…"
-        runCatching { cameraHandler?.close() }
+        // Skip handler.close() — it can block forever (stopPreview wait).
         openedDevice.set(null)
-        probeAttachedDevices()
+        usbIo.post { probeAttachedDevices() }
     }
 
     private fun probeAttachedDevices() {
+        if (released.get()) return
         val monitor = usbMonitor ?: return
         try {
-            // Merge USBMonitor list + Android UsbManager (some MJ firmwares only fill one).
             val fromMonitor = runCatching { monitor.deviceList }.getOrDefault(emptyList())
             val fromSystem = systemUsbDevices()
             val merged = LinkedHashMap<String, UsbDevice>()
@@ -219,17 +276,10 @@ class Mj008UvcSession(
         }
     }
 
-    /**
-     * MJ-008 / Miaojing OEM (`CameraSamplingActPresenter`):
-     * onAttach → filter USB3.0 / USB Camera → [USBMonitor.requestPermission] only.
-     * onConnect → open + startPreview → delay 1s → white light (`controlLed`).
-     *
-     * We mirror requestPermission-first; if already granted and onConnect never
-     * fires (common on this tablet), fall back to [openDevice] on [usbIo].
-     */
     private fun openOrRequest(device: UsbDevice) {
+        if (released.get()) return
         val monitor = usbMonitor ?: return
-        if (isReady) return
+        if (previewReady.get()) return
         val now = SystemClock.elapsedRealtime()
         if (opening.get() && now - lastOpenAttemptMs < 8_000L) {
             Log.d(TAG, "openOrRequest skipped — already opening")
@@ -239,23 +289,21 @@ class Mj008UvcSession(
         lastOpenAttemptMs = now
         val desc = UsbXuLightController.describe(device)
         try {
-            if (ready.isCompleted && !isReady) {
+            if (ready.isCompleted && !previewReady.get()) {
                 ready = CompletableDeferred()
             }
             val granted = runCatching { monitor.hasPermission(device) }.getOrDefault(false) ||
                 systemHasPermission(device)
             lastStatus = if (granted) {
-                "UVC: permiso OK — requestPermission($desc) como OEM…"
+                "UVC: permiso OK — requestPermission($desc)…"
             } else {
-                "UVC: pidiendo permiso USB ($desc). Si no sale diálogo, revise Ajustes→Apps→MLH→USB"
+                "UVC: pidiendo permiso USB ($desc)"
             }
             Log.i(TAG, lastStatus)
-            // OEM path: always requestPermission; USBMonitor opens via onConnect.
             runCatching { monitor.requestPermission(device) }
 
-            // Fallback if onConnect never arrives (already-granted / no dialog).
             usbIo.postDelayed({
-                if (isReady || cameraHandler?.isOpened == true) {
+                if (released.get() || previewReady.get() || cameraOpenFlag.get()) {
                     opening.set(false)
                     return@postDelayed
                 }
@@ -266,7 +314,7 @@ class Mj008UvcSession(
                     lastStatus = "UVC: sin permiso USB para $desc"
                     return@postDelayed
                 }
-                lastStatus = "UVC: sin onConnect — openDevice($desc) en hilo USB…"
+                lastStatus = "UVC: sin onConnect — openDevice($desc)…"
                 Log.w(TAG, lastStatus)
                 val ctrl = try {
                     monitor.openDevice(device)
@@ -276,17 +324,17 @@ class Mj008UvcSession(
                 }
                 if (ctrl == null) {
                     opening.set(false)
-                    lastStatus = "UVC: openDevice null — pulse Reintentar ($desc)"
+                    lastStatus = "UVC: openDevice null — Reintentar ($desc)"
                 } else {
                     openPreviewOnUsbThread(device, ctrl)
                 }
             }, 2_200L)
 
             usbIo.postDelayed({
-                if (opening.get() && !isReady) {
+                if (opening.get() && !previewReady.get()) {
                     Log.w(TAG, "open watchdog — still not ready after 12s")
                     opening.set(false)
-                    lastStatus = "UVC: timeout abriendo $desc — pulse Reintentar"
+                    lastStatus = "UVC: timeout abriendo $desc — Reintentar o Demo"
                 }
             }, 12_000L)
         } catch (e: Exception) {
@@ -296,22 +344,11 @@ class Mj008UvcSession(
         }
     }
 
-    private fun openPreview(
-        device: UsbDevice?,
-        ctrlBlock: USBMonitor.UsbControlBlock?,
-    ) {
-        // onConnect may arrive on USBMonitor's thread — route to usbIo.
-        if (Looper.myLooper() == usbThread.looper) {
-            openPreviewOnUsbThread(device, ctrlBlock)
-        } else {
-            usbIo.post { openPreviewOnUsbThread(device, ctrlBlock) }
-        }
-    }
-
     private fun openPreviewOnUsbThread(
         device: UsbDevice?,
         ctrlBlock: USBMonitor.UsbControlBlock?,
     ) {
+        if (released.get()) return
         val handler = cameraHandler ?: run {
             opening.set(false)
             lastStatus = "UVC: sin handler (vista no lista)"
@@ -335,38 +372,44 @@ class Mj008UvcSession(
         }
         try {
             lastStatus = "UVC: open() nativo ${UsbXuLightController.describe(device)}…"
-            if (handler.isOpened) {
-                runCatching { handler.close() }
-            }
+            // Never handler.close() here — stopPreview waits forever on stalled USB.
             handler.open(ctrlBlock)
+            cameraOpenFlag.set(true)
             openedDevice.set(device)
+
             fun startSurface() {
-                if (!started.get()) return
+                if (!started.get() || released.get()) return
                 val h = cameraHandler ?: return
                 val tex = view.surfaceTexture ?: return
                 previewSurface?.release()
                 previewSurface = Surface(tex)
                 h.startPreview(previewSurface)
-            }
-            mainHandler.post {
-                if (!started.get()) return@post
-                if (view.surfaceTexture != null) {
-                    startSurface()
-                } else {
-                    mainHandler.postDelayed({ startSurface() }, 300)
-                    mainHandler.postDelayed({ startSurface() }, 800)
-                }
+                previewReady.set(true)
+                opening.set(false)
                 lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
                 Log.i(TAG, lastStatus)
-                opening.set(false)
                 completeReady(true)
-                // OEM: sendEmptyMessageDelayed(1008, 1000) — “下发了白光指令”
+            }
+
+            mainHandler.post {
+                if (!started.get() || released.get()) return@post
+                if (view.surfaceTexture != null) {
+                    usbIo.post { startSurface() }
+                } else {
+                    mainHandler.postDelayed({
+                        usbIo.post { startSurface() }
+                    }, 300)
+                    mainHandler.postDelayed({
+                        usbIo.post { startSurface() }
+                    }, 800)
+                }
                 mainHandler.postDelayed({
-                    if (started.get()) {
+                    if (started.get() && !released.get() && previewReady.get()) {
                         usbIo.post {
                             runCatching { applyLightMode(LightMode.WHITE) }
                             lightsOn = true
-                            lastStatus = "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
+                            lastStatus =
+                                "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
                             Log.i(TAG, lastStatus)
                         }
                     }
@@ -374,6 +417,7 @@ class Mj008UvcSession(
             }
         } catch (e: Exception) {
             opening.set(false)
+            cameraOpenFlag.set(false)
             lastStatus = "UVC error: ${e.message}"
             Log.e(TAG, "UVC connect failed", e)
             completeReady(false)
@@ -402,13 +446,15 @@ class Mj008UvcSession(
 
     fun stop() {
         if (!started.compareAndSet(true, false)) return
-        runCatching { turnOff() }
-        runCatching { usbMonitor?.unregister() }
-        previewView?.onPause()
+        previewReady.set(false)
+        // Skip turnOff — controlLed can hang. Skip blocking close.
         mainHandler.removeCallbacksAndMessages(null)
+        usbIo.post {
+            runCatching { usbMonitor?.unregister() }
+            mainHandler.post { runCatching { previewView?.onPause() } }
+        }
     }
 
-    /** Prefer live [isReady]; a prior failed complete must not block a later successful open. */
     suspend fun awaitReady(timeoutMs: Long = 25_000): Boolean {
         if (isReady) return true
         return try {
@@ -420,14 +466,16 @@ class Mj008UvcSession(
     }
 
     fun applyWhiteLight() {
-        applyLightMode(LightMode.WHITE)
-        lightsOn = true
+        usbIo.post {
+            applyLightMode(LightMode.WHITE)
+            lightsOn = true
+        }
     }
 
     fun applyLightMode(mode: LightMode) {
         val cmd = mode.usbCmd ?: return
         val handler = cameraHandler ?: return
-        if (handler.isOpened != true) {
+        if (!cameraOpenFlag.get() || released.get()) {
             Log.w(TAG, "applyLightMode skipped — camera not open")
             return
         }
@@ -443,18 +491,21 @@ class Mj008UvcSession(
     }
 
     fun turnOff() {
+        if (!cameraOpenFlag.get() || released.get()) return
         val handler = cameraHandler ?: return
-        if (handler.isOpened != true) return
         val payload = UsbXuLightController.lightPayload(
             UsbXuLightController.CMD_WOODS,
             UsbXuLightController.ARG_OFF,
         )
-        runCatching { handler.controlLed(130, 55318, payload) }
-        lightsOn = false
+        usbIo.post {
+            runCatching { handler.controlLed(130, 55318, payload) }
+            lightsOn = false
+        }
     }
 
     suspend fun captureStill(target: File): Bitmap? {
         val handler = cameraHandler ?: return null
+        if (!previewReady.get()) return null
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
         handler.captureStill(target.absolutePath)
@@ -467,32 +518,42 @@ class Mj008UvcSession(
         return if (target.exists()) BitmapFactory.decodeFile(target.absolutePath) else null
     }
 
+    /**
+     * Abandon USB without waiting. [UVCCameraHandler.release]/[close]/[stopPreview] and
+     * [USBMonitor.destroy] can block forever on MJ-008; joining them ANRs Captura.
+     */
     fun release() {
-        stop()
+        if (!released.compareAndSet(false, true)) return
+        started.set(false)
         opening.set(false)
+        previewReady.set(false)
+        cameraOpenFlag.set(false)
         lightsOn = false
         mainHandler.removeCallbacksAndMessages(null)
-        runCatching { cameraHandler?.release() }
-        runCatching { usbMonitor?.destroy() }
-        previewSurface?.release()
-        previewSurface = null
-        cameraHandler = null
+        val monitor = usbMonitor
+        val handler = cameraHandler
         usbMonitor = null
+        cameraHandler = null
         previewView = null
         openedDevice.set(null)
-        started.set(false)
-        runCatching {
-            usbIo.removeCallbacksAndMessages(null)
-            usbThread.quitSafely()
-        }
+        previewSurface?.release()
+        previewSurface = null
+        // Fire-and-forget teardown on a daemon — never join.
+        Thread({
+            runCatching { monitor?.unregister() }
+            // Skip monitor.destroy() / handler.release() — known to hang on this firmware.
+            runCatching { usbIo.removeCallbacksAndMessages(null) }
+            runCatching { usbThread.quitSafely() }
+            Log.i(TAG, "release abandoned monitor/handler without blocking close")
+        }, "mj008-uvc-abandon").apply { isDaemon = true; start() }
+        // Silence unused
+        Log.d(TAG, "release: dropped handler=${handler != null}")
     }
 
     private fun completeReady(ok: Boolean) {
-        // Always allow a later success after an earlier false complete.
         if (!ready.isCompleted) {
             ready.complete(ok)
-        } else if (ok && isReady) {
-            // Already completed false earlier — replace deferred for future awaiters.
+        } else if (ok && previewReady.get()) {
             ready = CompletableDeferred(true)
         }
     }
