@@ -61,6 +61,7 @@ object GushangLicense {
     fun ensureRegistered(context: Context): Boolean {
         if (registered.get()) return true
         return try {
+            NativeLibraryLoader.ensureLoaded()
             // Touch assets so models are present (SDK may copy from assets itself).
             listOf("pyramidbox.nb", "facekeypoints.nb", "maskclassifier.nb").forEach { name ->
                 runCatching { context.assets.open(name).close() }
@@ -68,7 +69,9 @@ object GushangLicense {
             }
             if (!skindetectReadable()) {
                 lastMessage =
-                    "Sin acceso a $SKINDETECT_DIR — conceda almacenamiento y conserve la licencia del equipo."
+                    "Sin acceso a $SKINDETECT_DIR — en Android 11 active " +
+                        "Ajustes → Apps → MLH Skin → Acceso a todos los archivos. " +
+                        "Conserve la licencia del equipo en esa carpeta."
                 Log.w(TAG, lastMessage)
             }
             val token = UUID.randomUUID().toString().replace("-", "")
