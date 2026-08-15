@@ -48,6 +48,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.ui.text.style.TextAlign
@@ -148,6 +149,7 @@ fun CaptureScreen(
     var uvcLabel by remember { mutableStateOf(if (demoMode) "Modo Demo" else "Iniciando UVC…") }
     var uvcReady by remember { mutableStateOf(false) }
     var lightsOn by remember { mutableStateOf(false) }
+    var uvcGiveUp by remember { mutableStateOf(false) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -188,6 +190,8 @@ fun CaptureScreen(
         }
 
         uvcReady = false
+        uvcGiveUp = false
+        lightsOn = false
         val usbSummary = runCatching {
             val mgr = context.getSystemService(Context.USB_SERVICE) as UsbManager
             val list = mgr.deviceList.values.toList()
@@ -195,6 +199,16 @@ fun CaptureScreen(
             "USB=${list.size} pick=${pick?.let { UsbXuLightController.describe(it.device) + " s=" + it.score } ?: "ninguno"}"
         }.getOrDefault("USB=?")
         Log.i("Capture", usbSummary)
+
+        // Fail-fast watchdog: never leave the clinic staring at a spinner.
+        val watchdog = launch {
+            delay(8_000)
+            if (!uvcReady) {
+                uvcGiveUp = true
+                uvcLabel = "$usbSummary — sin imagen en 8 s. Use Demo o Reintentar."
+                status = "La cámara USB no abrió a tiempo. Puede continuar en Demo sin instalar otra vez."
+            }
+        }
 
         try {
             // Never await USB close here — it can hang forever on this tablet.
@@ -213,27 +227,31 @@ fun CaptureScreen(
             uvcSession = session
             uvcLabel = session.statusLabel
             Log.i("Capture", "UVC bind+start done: ${session.statusLabel}")
-            repeat(40) {
+            repeat(16) { // ~8s more polling (watchdog already at 8s total from start)
                 delay(500)
                 uvcLabel = session.statusLabel
-                if (session.isReady) return@repeat
+                if (session.isReady) {
+                    uvcGiveUp = false
+                    return@repeat
+                }
             }
             if (!session.isReady) {
-                uvcLabel = "${session.statusLabel} — pulse Reintentar si no hay imagen"
+                uvcGiveUp = true
+                uvcLabel = "${session.statusLabel} — sin preview. Demo o Reintentar."
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("Capture", "UVC prepare/bind/start failed", e)
+            uvcGiveUp = true
             val detail = e.message ?: e.javaClass.simpleName
             uvcLabel = when {
-                detail.contains("timed out", ignoreCase = true) ||
-                    detail.contains("Timeout", ignoreCase = true) ->
-                    "Tiempo agotado al preparar USB. Pulse Reintentar. v${BuildConfig.VERSION_NAME}"
                 detail.contains("0x7f0e0000") || detail.contains("Resource ID") ->
                     "Falta recurso cámara (click). Reinstale v${BuildConfig.VERSION_NAME}+"
-                else -> "Error UVC: $detail"
+                else -> "Error UVC: $detail · use Demo o Reintentar"
             }
+        } finally {
+            watchdog.cancel()
         }
     }
 
@@ -387,6 +405,7 @@ fun CaptureScreen(
                                 Spacer(Modifier.height(12.dp))
                                 Button(
                                     onClick = {
+                                        uvcGiveUp = false
                                         val existing = uvcSession
                                         if (existing != null) {
                                             existing.retryConnect()
@@ -398,10 +417,28 @@ fun CaptureScreen(
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara frontal USB3.0") }
                                 Spacer(Modifier.height(8.dp))
+                                OutlinedButton(
+                                    onClick = {
+                                        vm.enableDemoMode(true)
+                                        useUvc = false
+                                        uvcGiveUp = false
+                                        lightsOn = true
+                                        status = "Modo Demo: pulse Iniciar análisis (sin USB)."
+                                        uvcLabel = "Demo activo"
+                                    },
+                                ) { Text("Continuar en Demo ahora (sin USB)") }
+                                if (uvcGiveUp) {
+                                    Spacer(Modifier.height(8.dp))
+                                    Text(
+                                        "No espere más: en 8 s no hubo imagen. Demo prueba el flujo completo sin la tablet.",
+                                        color = Paper.copy(alpha = 0.9f),
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        textAlign = TextAlign.Center,
+                                    )
+                                }
+                                Spacer(Modifier.height(8.dp))
                                 Text(
-                                    "No hace falta permiso de cámara de Android. " +
-                                        "Si no sale diálogo USB, es normal: el permiso ya está concedido y la app abre sola. " +
-                                        "v${BuildConfig.VERSION_NAME}",
+                                    "Si no sale diálogo USB, es normal. v${BuildConfig.VERSION_NAME}",
                                     color = Paper.copy(alpha = 0.75f),
                                     style = MaterialTheme.typography.bodyMedium,
                                     textAlign = TextAlign.Center,
