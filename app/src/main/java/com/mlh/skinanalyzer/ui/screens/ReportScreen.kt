@@ -182,6 +182,18 @@ fun ReportScreen(
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink.copy(alpha = 0.55f),
                 )
+                Text(
+                    "Motor: ${r.analysisEngine}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = if (r.isClinicalLicensed) Accent else Color(0xFFB71C1C),
+                )
+                if (!r.isClinicalLicensed) {
+                    Text(
+                        "NO CLÍNICO — simulación / Demo",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = Color(0xFFB71C1C),
+                    )
+                }
             }
         }
         Row(
