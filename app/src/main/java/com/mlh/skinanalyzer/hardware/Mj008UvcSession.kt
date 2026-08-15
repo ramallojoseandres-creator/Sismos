@@ -3,7 +3,6 @@ package com.mlh.skinanalyzer.hardware
 import android.app.Activity
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.BitmapFactory
 import android.hardware.usb.UsbDevice
 import android.hardware.usb.UsbManager
 import android.os.Handler
@@ -573,81 +572,89 @@ class Mj008UvcSession(
         }
     }
 
+    /**
+     * Apaga LEDs (canal 0x13 / Woods off). Best-effort con tope para no colgar
+     * la UI al salir de Captura.
+     */
     fun turnOff() {
-        if (!previewReady.get() || released.get()) return
-        usbIo.post {
-            runCatching {
-                cameraHandler?.controlLed(
-                    UsbXuLightController.UNIT_ID,
-                    UsbXuLightController.LIGHT_ADDR,
-                    UsbXuLightController.lightPayload(
-                        UsbXuLightController.CMD_WOODS,
-                        UsbXuLightController.ARG_OFF,
-                    ),
-                )
-            }
+        if (released.get()) {
             lightsOn = false
-            lastStatus = "LED OFF (controlLed)"
+            return
+        }
+        val handler = cameraHandler
+        if (handler == null) {
+            lightsOn = false
+            return
+        }
+        val latch = CountDownLatch(1)
+        usbIo.post {
+            try {
+                runCatching {
+                    handler.controlLed(
+                        UsbXuLightController.UNIT_ID,
+                        UsbXuLightController.LIGHT_ADDR,
+                        UsbXuLightController.lightPayload(
+                            UsbXuLightController.CMD_WOODS,
+                            UsbXuLightController.ARG_OFF,
+                        ),
+                    )
+                }.onFailure { Log.w(TAG, "turnOff controlLed: ${it.message}") }
+                lightsOn = false
+                lastStatus = "LED OFF (controlLed)"
+                Log.i(TAG, "LED OFF via controlLed")
+            } finally {
+                latch.countDown()
+            }
+        }
+        if (!latch.await(1_500, TimeUnit.MILLISECONDS)) {
+            Log.w(TAG, "turnOff timed out (1.5s) — luces pueden seguir encendidas")
+            lightsOn = false
         }
     }
 
+    /** True while our session still considers preview usable. */
+    fun isCameraAlive(): Boolean = previewReady.get() && !released.get() && cameraHandler != null
+
     /**
-     * Captura still sin pasar por SoundPool del OEM (NPE en CameraThread si el pool
-     * no inicializó). Toma el bitmap del TextureView, aplica rotación/espejo de
-     * [CapturePrefs] y escribe el JPEG a disco — es lo que lee Gushang.
+     * Captura still **sin** OEM [UVCCameraHandler.captureStill] (SoundPool NPE mata
+     * CameraThread). Usa TextureView.getBitmap() (no bloquea) y escribe JPEG orientado.
      */
     suspend fun captureStill(target: File): Bitmap? {
-        if (!previewReady.get()) return null
+        if (!isCameraAlive()) {
+            Log.e(TAG, "captureStill aborted — camera not alive")
+            return null
+        }
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
 
+        // Prefer getBitmap — never waits. captureStillImage waits on frame callback
+        // and used to hang the whole sequence when frames stalled.
         val raw = withContext(kotlinx.coroutines.Dispatchers.Main) {
-            val view = previewView
-            val fromGl = runCatching { view?.captureStillImage() }.getOrNull()
-            fromGl ?: runCatching { view?.bitmap }.getOrNull()
+            val view = previewView ?: return@withContext null
+            runCatching { view.bitmap }.getOrNull()?.takeIf { !it.isRecycled && it.width > 0 }
+                ?: runCatching { view.captureStillImage() }.getOrNull()
+                    ?.takeIf { !it.isRecycled && it.width > 0 }
         }
 
-        if (raw != null) {
-            val rotation = CapturePrefs.rotationDeg(activity)
-            val mirror = CapturePrefs.mirrorHorizontal(activity)
-            val oriented = CapturePrefs.transformBitmap(raw, rotation, mirror)
-            withContext(kotlinx.coroutines.Dispatchers.IO) {
-                target.outputStream().use { out ->
-                    oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
-                }
-            }
-            Log.i(
-                TAG,
-                "captureStill OK ${target.name} ${target.length()} bytes " +
-                    "rot=$rotation mirror=$mirror ${oriented.width}x${oriented.height}",
-            )
-            return oriented
+        if (raw == null) {
+            Log.e(TAG, "captureStill: TextureView bitmap null")
+            return null
         }
 
-        // Fallback OEM path — may NPE on SoundPool; isolate on our side.
-        val handler = cameraHandler ?: return null
-        return try {
-            handler.captureStill(target.absolutePath)
-            repeat(40) {
-                delay(100)
-                if (target.exists() && target.length() > 10_000) {
-                    val decoded = BitmapFactory.decodeFile(target.absolutePath) ?: return null
-                    val rotation = CapturePrefs.rotationDeg(activity)
-                    val mirror = CapturePrefs.mirrorHorizontal(activity)
-                    val oriented = CapturePrefs.transformBitmap(decoded, rotation, mirror)
-                    if (oriented !== decoded) {
-                        target.outputStream().use {
-                            oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, it)
-                        }
-                    }
-                    return oriented
-                }
+        val rotation = CapturePrefs.rotationDeg(activity)
+        val mirror = CapturePrefs.mirrorHorizontal(activity)
+        val oriented = CapturePrefs.transformBitmap(raw, rotation, mirror)
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+            target.outputStream().use { out ->
+                oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
             }
-            null
-        } catch (e: Exception) {
-            Log.e(TAG, "captureStill fallback failed", e)
-            null
         }
+        Log.i(
+            TAG,
+            "captureStill OK ${target.name} ${target.length()} bytes " +
+                "rot=$rotation mirror=$mirror ${oriented.width}x${oriented.height}",
+        )
+        return oriented
     }
 
     /**
@@ -655,6 +662,9 @@ class Mj008UvcSession(
      * [USBMonitor.destroy] can block forever on MJ-008; joining them ANRs Captura.
      */
     fun release() {
+        if (released.get()) return
+        // Apagar LEDs mientras el handler aún existe.
+        runCatching { turnOff() }
         if (!released.compareAndSet(false, true)) return
         started.set(false)
         opening.set(false)
@@ -679,7 +689,6 @@ class Mj008UvcSession(
             runCatching { usbThread.quitSafely() }
             Log.i(TAG, "release abandoned monitor/handler without blocking close")
         }, "mj008-uvc-abandon").apply { isDaemon = true; start() }
-        // Silence unused
         Log.d(TAG, "release: dropped handler=${handler != null}")
     }
 

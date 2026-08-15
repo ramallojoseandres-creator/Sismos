@@ -155,8 +155,11 @@ public class UVCCameraTextureView extends AspectRatioTextureView implements Text
         synchronized (this.mCaptureSync) {
             this.mReqesutCaptureStillImage = true;
             try {
-                this.mCaptureSync.wait();
+                // OEM wait() without timeout hangs forever if frames stop —
+                // that froze MLH capture on "Luz blanca — 1 de 8".
+                this.mCaptureSync.wait(2_500L);
             } catch (InterruptedException unused) {
+                Thread.currentThread().interrupt();
             }
             bitmap = this.mTempBitmap;
         }

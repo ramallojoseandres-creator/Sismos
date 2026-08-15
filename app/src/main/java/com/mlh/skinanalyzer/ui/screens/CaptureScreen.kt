@@ -70,6 +70,8 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.mlh.skinanalyzer.BuildConfig
 import com.mlh.skinanalyzer.analysis.DemoFrameGenerator
 import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
@@ -89,10 +91,12 @@ import com.mlh.skinanalyzer.ui.theme.Ink
 import com.mlh.skinanalyzer.ui.theme.Paper
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.yield
 import java.io.File
 import java.util.concurrent.ExecutorService
@@ -299,10 +303,29 @@ fun CaptureScreen(
 
     var captureJob by remember { mutableStateOf<Job?>(null) }
 
+    fun forceLightsOff() {
+        runCatching { uvcSession?.turnOff() }
+        runCatching { controller.turnOff() }
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_STOP) {
+                captureJob?.cancel()
+                forceLightsOff()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
+
     DisposableEffect(Unit) {
         onDispose {
             captureJob?.cancel()
             captureJob = null
+            forceLightsOff()
             vm.markCaptureActive(false)
             vm.releaseUvcSession()
             uvcSession = null
@@ -677,12 +700,27 @@ fun CaptureScreen(
                                         }
                                         useUvc && uvcSession != null -> {
                                             val session = uvcSession!!
+                                            if (!session.isCameraAlive()) {
+                                                status =
+                                                    "Cámara USB desconectada en ${mode.displayName}. Reintente."
+                                                captureBanner = ""
+                                                Log.e("Capture", "camera dead before ${mode.shortName}")
+                                                return@launch
+                                            }
                                             withContext(Dispatchers.IO) {
                                                 session.applyLightMode(mode)
                                             }
                                             delay(if (index == 0) settleFirst else settleBetween)
-                                            val still = withContext(Dispatchers.IO) {
+                                            val still = withTimeoutOrNull(5_000) {
                                                 session.captureStill(oemFile)
+                                            }
+                                            if (still == null) {
+                                                Log.e("Capture", "Timeout/null capturando ${mode.shortName}")
+                                                status =
+                                                    "No se pudo capturar en modo ${mode.displayName}. " +
+                                                        "Verifique la conexión USB y reintente."
+                                                captureBanner = ""
+                                                return@launch
                                             }
                                             if (index < total - 1) {
                                                 delay(settleAfter)
@@ -702,18 +740,13 @@ fun CaptureScreen(
                                         previewBitmap = bmp
                                     } else {
                                         status = "No se pudo capturar ${mode.displayName}"
+                                        captureBanner = ""
+                                        return@launch
                                     }
                                 }
                                 val seqMs = SystemClock.elapsedRealtime() - seqStart
                                 Log.i("Capture", "sequence total ${seqMs}ms for $total lights")
                                 if (!isActive) return@launch
-                                withContext(Dispatchers.IO) {
-                                    when {
-                                        demoMode -> Unit
-                                        useUvc -> runCatching { uvcSession?.turnOff() }
-                                        else -> runCatching { controller.turnOff() }
-                                    }
-                                }
                                 when {
                                     captured.isEmpty() -> {
                                         captureBanner = ""
@@ -754,6 +787,14 @@ fun CaptureScreen(
                                 status = "Error: ${e.message}"
                                 Log.e("Capture", "sequence failed", e)
                             } finally {
+                                if (!demoMode) {
+                                    withContext(NonCancellable) {
+                                        when {
+                                            useUvc -> runCatching { uvcSession?.turnOff() }
+                                            else -> runCatching { controller.turnOff() }
+                                        }
+                                    }
+                                }
                                 capturing = false
                                 if (!vm.analyzing) captureBanner = ""
                             }

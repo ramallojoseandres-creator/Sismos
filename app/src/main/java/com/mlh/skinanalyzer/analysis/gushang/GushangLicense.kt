@@ -14,15 +14,17 @@ import java.util.concurrent.atomic.AtomicInteger
  *
  * El .so lee `/sdcard/skindetect` (equiv. `/storage/emulated/0/skindetect`).
  * Archivo: `licence` (32 bytes en equipos verificados).
- * OEM register(): **0 = activado**.
+ * OEM register(): **0 = activado** (única fuente de verdad).
  *
- * [JniInterface] solo se toca si las nativas precargaron bien, y solo una vez
- * por proceso (si &lt;clinit&gt; falla, Android no permite reintentar sin reiniciar).
+ * Las comprobaciones Java de exists/canRead son solo diagnóstico tras fallo —
+ * no bloquean la llamada a [JniInterface.register].
  */
 object GushangLicense {
     private const val TAG = "GushangLicense"
     const val SKINDETECT_DIR = "/storage/emulated/0/skindetect"
     private const val LICENCE_FILE = "licence"
+    /** Original de fábrica en algunos equipos MJ-008. */
+    private const val FACTORY_LICENCE = "/storage/emulated/0/licence"
 
     private val registerAttempted = AtomicBoolean(false)
     private val registered = AtomicBoolean(false)
@@ -52,10 +54,15 @@ object GushangLicense {
         appendLine("allFilesAccess=${isAllFilesAccessGranted()}")
         val dir = skindetectDir()
         val file = licenceFile()
+        val factory = File(FACTORY_LICENCE)
         appendLine("dir=$SKINDETECT_DIR exists=${dir.exists()} readable=${dir.canRead()}")
         appendLine(
             "licence=${file.absolutePath} exists=${file.exists()} " +
                 "readable=${file.canRead()} bytes=${if (file.exists()) file.length() else -1}",
+        )
+        appendLine(
+            "factory=$FACTORY_LICENCE exists=${factory.exists()} " +
+                "bytes=${if (factory.exists()) factory.length() else -1}",
         )
         if (dir.isDirectory) {
             dir.listFiles()?.sortedBy { it.name }?.take(30)?.forEach {
@@ -67,14 +74,45 @@ object GushangLicense {
     private fun isAllFilesAccessGranted(): Boolean =
         android.os.Build.VERSION.SDK_INT < 30 || Environment.isExternalStorageManager()
 
+    /** Copia el serial de fábrica a skindetect/ si falta o difiere de tamaño. */
+    private fun ensureLicenceCopiedFromFactory() {
+        val origen = File(FACTORY_LICENCE)
+        val destino = licenceFile()
+        if (!origen.exists() || origen.length() <= 0L) return
+        if (destino.exists() && destino.length() == origen.length()) return
+        runCatching {
+            destino.parentFile?.mkdirs()
+            origen.copyTo(destino, overwrite = true)
+            destino.setReadable(true, false)
+            Log.i(TAG, "Licencia recopiada: ${destino.length()} bytes → ${destino.absolutePath}")
+        }.onFailure {
+            Log.w(TAG, "No se pudo copiar licencia de fábrica: ${it.message}")
+        }
+    }
+
+    /** Texto de ayuda solo cuando register ya falló. */
+    private fun buildDiagnostic(code: Int): String {
+        val f = licenceFile()
+        return buildString {
+            append("register devolvió $code. ")
+            append("Archivo: exists=${f.exists()} ")
+            append("size=${if (f.exists()) f.length() else 0} ")
+            append("canRead=${f.canRead()} · ")
+            append("MANAGE_EXTERNAL_STORAGE=${isAllFilesAccessGranted()}")
+        }
+    }
+
     /**
-     * Diagnóstico separado (permiso / carpeta / archivo / lectura / motor).
      * Una sola llamada a register() por proceso.
+     * No usa exists/canRead como barrera previa.
      */
     fun ensureRegistered(context: Context): Boolean {
         if (registered.get()) return true
         if (registerAttempted.get()) {
-            // Already tried this process — do not touch JniInterface again.
+            needsAppRestart = true
+            if (!lastMessage.contains("cerrar", ignoreCase = true)) {
+                lastMessage = "$lastMessage · ${retryHint()}"
+            }
             return false
         }
 
@@ -86,36 +124,16 @@ object GushangLicense {
             return false
         }
 
-        val dir = skindetectDir()
+        ensureLicenceCopiedFromFactory()
+
         val file = licenceFile()
-        when {
-            !isAllFilesAccessGranted() -> {
-                lastMessage =
-                    "Falta permiso «Acceso a todos los archivos». " +
-                        "Ajustes → Apps → MLH Skin → Acceso a todos los archivos."
-                Log.w(TAG, lastMessage)
-                return false
-            }
-            !dir.exists() -> {
-                lastMessage = "No existe la carpeta /skindetect en el almacenamiento."
-                Log.w(TAG, lastMessage)
-                return false
-            }
-            !file.exists() -> {
-                lastMessage = "Falta el archivo de licencia en /skindetect/licence."
-                Log.w(TAG, lastMessage)
-                return false
-            }
-            !file.canRead() -> {
-                lastMessage = "El archivo licence existe pero no se puede leer."
-                Log.w(TAG, lastMessage)
-                return false
-            }
-        }
+        Log.i(
+            TAG,
+            "pre-register licence exists=${file.exists()} " +
+                "canRead=${file.canRead()} bytes=${if (file.exists()) file.length() else -1} " +
+                "allFiles=${isAllFilesAccessGranted()}",
+        )
 
-        Log.i(TAG, "licence found bytes=${file.length()} path=${file.absolutePath}")
-
-        // Only one attempt — if <clinit> fails, class is dead for this process.
         if (!registerAttempted.compareAndSet(false, true)) return registered.get()
 
         return try {
@@ -130,29 +148,29 @@ object GushangLicense {
             val ok = code == 0
             registered.set(ok)
             lastMessage = if (ok) {
-                "Licencia Gushang activa (register=0, licence=${file.length()} bytes)"
+                "Licencia Gushang activa (register=0, licence=" +
+                    "${if (file.exists()) file.length() else "?"} bytes)"
             } else {
-                "El motor rechazó la licencia (register=$code). " +
-                    "Archivo presente: ${file.length()} bytes."
+                "El motor rechazó la licencia. ${buildDiagnostic(code)}"
             }
             Log.i(TAG, lastMessage)
             ok
         } catch (e: UnsatisfiedLinkError) {
             needsAppRestart = true
             lastMessage = "libSkinDetect no cargó: ${e.message}. Cierre y reabra la app."
-            Log.e(TAG, lastMessage, e)
+            Log.e(TAG, "register lanzó excepción", e)
             false
         } catch (e: NoClassDefFoundError) {
             needsAppRestart = true
             lastMessage =
                 "JniInterface falló al iniciar (clase marcada). " +
                     "Cierre la app por completo y vuelva a abrirla. ${e.message}"
-            Log.e(TAG, lastMessage, e)
+            Log.e(TAG, "register lanzó excepción", e)
             false
-        } catch (e: Throwable) {
+        } catch (t: Throwable) {
             needsAppRestart = true
-            lastMessage = "Error licencia: ${e.message}. Puede hacer falta reiniciar la app."
-            Log.e(TAG, lastMessage, e)
+            lastMessage = "El motor nativo no respondió: ${t.message}. ${retryHint()}"
+            Log.e(TAG, "register lanzó excepción", t)
             false
         }
     }
