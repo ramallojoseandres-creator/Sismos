@@ -163,9 +163,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .onFailure { Log.w("MLH", "bg UVC release: ${it.message}") }
             }, "mlh-uvc-release").apply { isDaemon = true; start() }
         }
+        // Drop any separate USB-XU handle — luces irán por MaokinLight en la
+        // misma conexión UVC. Un segundo openDevice cuelga el MJ-008.
         Thread({
             runCatching { lightController.releaseUsbForUvc() }
                 .onFailure { Log.w("MLH", "bg USB-XU release: ${it.message}") }
+            runCatching { lightController.close() }
         }, "mlh-xu-release").apply { isDaemon = true; start() }
         return Mj008UvcSession(activity).also { uvcSession = it }
     }

@@ -46,6 +46,9 @@ class Mj008UvcSession(
     private val usbThread = HandlerThread("mj008-uvc-io").also { it.start() }
     private val usbIo = Handler(usbThread.looper)
     private val openedDevice = AtomicReference<UsbDevice?>(null)
+    /** Same UsbDeviceConnection as UVC — never a second openDevice for LEDs. */
+    private val maokinLights = AtomicReference<MaokinLightController?>(null)
+    private val ctrlBlockRef = AtomicReference<USBMonitor.UsbControlBlock?>(null)
 
     /** Set only from our code — never derived from handler.isOpened (that can deadlock). */
     private val previewReady = AtomicBoolean(false)
@@ -376,6 +379,10 @@ class Mj008UvcSession(
             handler.open(ctrlBlock)
             cameraOpenFlag.set(true)
             openedDevice.set(device)
+            ctrlBlockRef.set(ctrlBlock)
+            // Luces sobre LA MISMA conexión USB que UVC (MaokinLightController).
+            // Un segundo openDevice/claim cuelga el MJ-008.
+            bindMaokinLights(ctrlBlock)
 
             fun startSurface() {
                 if (!started.get() || released.get()) return
@@ -465,6 +472,20 @@ class Mj008UvcSession(
         }
     }
 
+    private fun bindMaokinLights(ctrlBlock: USBMonitor.UsbControlBlock) {
+        val conn = runCatching { ctrlBlock.connection }.getOrNull()
+        if (conn == null) {
+            Log.w(TAG, "MaokinLight: sin UsbDeviceConnection en ctrlBlock")
+            maokinLights.set(null)
+            return
+        }
+        // Same connection UVC already opened — do NOT openDevice again.
+        // Avoid force claimInterface here (can STALL while preview is live);
+        // native UVC open already claimed VideoControl on this connection.
+        maokinLights.set(MaokinLightController(conn))
+        Log.i(TAG, "MaokinLight bound to same UVC UsbDeviceConnection")
+    }
+
     fun applyWhiteLight() {
         usbIo.post {
             applyLightMode(LightMode.WHITE)
@@ -472,18 +493,39 @@ class Mj008UvcSession(
         }
     }
 
+    /**
+     * Drive LEDs on the UVC connection only ([MaokinLightController]).
+     * Never open a second USB handle here.
+     */
     fun applyLightMode(mode: LightMode) {
         val cmd = mode.usbCmd ?: return
-        val handler = cameraHandler ?: return
         if (!cameraOpenFlag.get() || released.get()) {
             Log.w(TAG, "applyLightMode skipped — camera not open")
             return
         }
+        val lights = maokinLights.get()
+        if (lights != null) {
+            val ok = lights.turnOn(cmd)
+            lightsOn = ok
+            if (ok) {
+                Log.i(TAG, "LED ${mode.shortName} via MaokinLight (same USB as UVC)")
+            } else {
+                lastStatus = "LED Maokin falló (${mode.shortName})"
+                // Fallback: native xu_write on same UVC fd (still one process).
+                fallbackControlLed(cmd)
+            }
+            return
+        }
+        fallbackControlLed(cmd)
+    }
+
+    private fun fallbackControlLed(cmd: Int) {
+        val handler = cameraHandler ?: return
         val payload = UsbXuLightController.lightPayload(cmd, UsbXuLightController.ARG_ON)
         try {
             handler.controlLed(130, 55318, payload)
             lightsOn = true
-            Log.i(TAG, "LED ${mode.shortName} via UVC XU")
+            Log.i(TAG, "LED cmd=0x${Integer.toHexString(cmd)} via controlLed fallback")
         } catch (e: Exception) {
             Log.e(TAG, "controlLed failed", e)
             lastStatus = "LED error: ${e.message}"
@@ -492,13 +534,22 @@ class Mj008UvcSession(
 
     fun turnOff() {
         if (!cameraOpenFlag.get() || released.get()) return
-        val handler = cameraHandler ?: return
-        val payload = UsbXuLightController.lightPayload(
-            UsbXuLightController.CMD_WOODS,
-            UsbXuLightController.ARG_OFF,
-        )
         usbIo.post {
-            runCatching { handler.controlLed(130, 55318, payload) }
+            val lights = maokinLights.get()
+            if (lights != null) {
+                runCatching { lights.turnOff() }
+            } else {
+                runCatching {
+                    cameraHandler?.controlLed(
+                        130,
+                        55318,
+                        UsbXuLightController.lightPayload(
+                            UsbXuLightController.CMD_WOODS,
+                            UsbXuLightController.ARG_OFF,
+                        ),
+                    )
+                }
+            }
             lightsOn = false
         }
     }
@@ -529,6 +580,8 @@ class Mj008UvcSession(
         previewReady.set(false)
         cameraOpenFlag.set(false)
         lightsOn = false
+        maokinLights.set(null)
+        ctrlBlockRef.set(null)
         mainHandler.removeCallbacksAndMessages(null)
         val monitor = usbMonitor
         val handler = cameraHandler

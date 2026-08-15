@@ -676,20 +676,22 @@ fun CaptureScreen(
                                         }
                                         useUvc && uvcSession != null -> {
                                             val session = uvcSession!!
+                                            // Luces + cámara: misma UsbDeviceConnection (Maokin).
+                                            // Nunca controller USB-XU / segundo openDevice aquí.
                                             withContext(Dispatchers.IO) {
                                                 session.applyLightMode(mode)
-                                                if (controller.usingSerial) {
-                                                    runCatching { controller.applyLightMode(mode) }
-                                                }
                                             }
-                                            // OEM settle: ~1.5s first / ~2s between shots
                                             delay(
                                                 if (index == 0) LightMode.SETTLE_FIRST_MS
                                                 else LightMode.SETTLE_BETWEEN_MS,
                                             )
-                                            withContext(Dispatchers.IO) {
+                                            val still = withContext(Dispatchers.IO) {
                                                 session.captureStill(oemFile)
                                             }
+                                            if (index < total - 1) {
+                                                delay(LightMode.SETTLE_AFTER_SHOT_MS)
+                                            }
+                                            still
                                         }
                                         else -> {
                                             withContext(Dispatchers.IO) {

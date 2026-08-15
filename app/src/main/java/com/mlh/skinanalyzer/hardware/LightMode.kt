@@ -36,10 +36,12 @@ enum class LightMode(
 
         /** OEM: white light message 1008 delayed 1000ms after startPreview. */
         const val WHITE_LIGHT_DELAY_MS = 1_000L
-        /** OEM SAMPLING_TIME_DELAY_FIRST_SHOOT. */
-        const val SETTLE_FIRST_MS = 1_500L
-        /** OEM SAMPLING_TIME_DELAY_AFTER_SHOOT between light change and next still. */
-        const val SETTLE_BETWEEN_MS = 2_000L
+        /** [MaokinLightController.DELAY_FIRST_SHOT] — light on → first still. */
+        const val SETTLE_FIRST_MS = MaokinLightController.DELAY_FIRST_SHOT
+        /** [MaokinLightController.DELAY_BETWEEN] — light on → still (after first). */
+        const val SETTLE_BETWEEN_MS = MaokinLightController.DELAY_BETWEEN
+        /** [MaokinLightController.DELAY_AFTER_SHOT] — after still → next light. */
+        const val SETTLE_AFTER_SHOT_MS = MaokinLightController.DELAY_AFTER_SHOT
     }
 }
 
