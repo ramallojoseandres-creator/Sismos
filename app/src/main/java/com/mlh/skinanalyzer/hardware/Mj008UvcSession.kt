@@ -14,6 +14,7 @@ import android.util.Log
 import android.view.Surface
 import com.serenegiant.usb.USBMonitor
 import com.serenegiant.usbcameracommon.UVCCameraHandler
+import com.serenegiant.widget.CameraViewInterface
 import com.serenegiant.widget.UVCCameraTextureView
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
@@ -129,6 +130,23 @@ class Mj008UvcSession(
     fun bindPreview(view: UVCCameraTextureView): Boolean {
         if (released.get()) return false
         previewView = view
+        view.setCallback(object : CameraViewInterface.Callback {
+            override fun onSurfaceCreated(view: CameraViewInterface, surface: Surface) {
+                Log.d(TAG, "onSurfaceCreated")
+            }
+
+            override fun onSurfaceChanged(view: CameraViewInterface, surface: Surface, width: Int, height: Int) {
+                Log.d(TAG, "onSurfaceChanged ${width}x$height")
+            }
+
+            override fun onSurfaceDestroy(view: CameraViewInterface, surface: Surface) {
+                Log.i(TAG, "onSurfaceDestroy — releasing preview surface")
+                previewReady.set(false)
+                lightsOn = false
+                runCatching { previewSurface?.release() }
+                previewSurface = null
+            }
+        })
         if (cameraHandler != null) return true
         val latch = CountDownLatch(1)
         val holder = AtomicReference<UVCCameraHandler?>()
@@ -421,27 +439,42 @@ class Mj008UvcSession(
 
             fun startSurface() {
                 if (!started.get() || released.get()) return
+                if (previewReady.get()) {
+                    Log.d(TAG, "startSurface skipped — preview already ready")
+                    return
+                }
                 val h = cameraHandler ?: return
-                val tex = view.surfaceTexture ?: return
-                previewSurface?.release()
-                previewSurface = Surface(tex)
-                h.startPreview(previewSurface)
-                previewReady.set(true)
-                opening.set(false)
-                // Brief §2: luces solo vía controlLed del mismo handler UVC — nunca
-                // un segundo openDevice / claimInterface / Maokin controlTransfer.
-                lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
-                Log.i(TAG, lastStatus)
-                completeReady(true)
-                usbIo.postDelayed({
-                    if (started.get() && !released.get() && previewReady.get()) {
-                        runCatching { applyLightMode(LightMode.WHITE) }
-                        lightsOn = true
-                        lastStatus =
-                            "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
-                        Log.i(TAG, lastStatus)
-                    }
-                }, LightMode.WHITE_LIGHT_DELAY_MS)
+                val tex = view.surfaceTexture ?: run {
+                    Log.w(TAG, "startSurface: surfaceTexture null")
+                    return
+                }
+                try {
+                    previewSurface?.release()
+                    previewSurface = Surface(tex)
+                    h.startPreview(previewSurface)
+                    previewReady.set(true)
+                    opening.set(false)
+                    lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
+                    Log.i(TAG, lastStatus)
+                    completeReady(true)
+                    usbIo.postDelayed({
+                        if (started.get() && !released.get() && previewReady.get()) {
+                            runCatching { applyLightMode(LightMode.WHITE) }
+                            lightsOn = true
+                            lastStatus =
+                                "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
+                            Log.i(TAG, lastStatus)
+                        }
+                    }, LightMode.WHITE_LIGHT_DELAY_MS)
+                } catch (e: Exception) {
+                    Log.e(TAG, "startSurface / preview failed (EGL?)", e)
+                    runCatching { previewSurface?.release() }
+                    previewSurface = null
+                    previewReady.set(false)
+                    opening.set(false)
+                    lastStatus = "UVC: error de superficie — Reintentar (${e.message})"
+                    completeReady(false)
+                }
             }
 
             mainHandler.post {
