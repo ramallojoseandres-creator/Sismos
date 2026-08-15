@@ -65,12 +65,14 @@ fun SettingsScreen(
     demoMode: Boolean = false,
     onDemoModeChange: (Boolean) -> Unit = {},
     appVersion: String = "",
+    gushangLicenseStatus: String = "",
     onBack: () -> Unit,
     onSaveClinic: (ClinicProfile) -> Unit,
     onToggleIndicator: (String, Boolean) -> Unit,
     onRefreshHardware: () -> Unit,
     onOpenDiagnostic: () -> Unit = {},
     onOpenLightTest: () -> Unit = {},
+    onRefreshGushang: () -> Unit = {},
 ) {
     var name by remember(clinic) { mutableStateOf(clinic.clinicName) }
     var doctor by remember(clinic) { mutableStateOf(clinic.doctorName) }
@@ -217,6 +219,18 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.5f),
             )
+            Spacer(Modifier.height(8.dp))
+            Text("Licencia Gushang", style = MaterialTheme.typography.titleLarge, color = Accent)
+            Text(
+                gushangLicenseStatus,
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.7f),
+            )
+            OutlinedButton(
+                onClick = onRefreshGushang,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(4.dp),
+            ) { Text("Recomprobar licencia /sdcard/skindetect") }
             if (hardwareDiagnostics.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Diagnóstico USB / serie", style = MaterialTheme.typography.titleLarge)

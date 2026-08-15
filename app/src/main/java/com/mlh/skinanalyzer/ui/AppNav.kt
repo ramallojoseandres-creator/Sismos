@@ -108,6 +108,8 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onRefreshHardware = { vm.refreshHardware() },
                 onOpenDiagnostic = { nav.navigate(Routes.DIAGNOSTIC) },
                 onOpenLightTest = { nav.navigate(Routes.LIGHT_TEST) },
+                gushangLicenseStatus = vm.gushangLicenseStatus,
+                onRefreshGushang = { vm.refreshGushangStatus() },
             )
         }
         composable(Routes.DIAGNOSTIC) {

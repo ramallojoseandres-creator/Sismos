@@ -16,11 +16,14 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.FacialProportionAnalyzer
+import com.mlh.skinanalyzer.analysis.gushang.GushangLicense
+import com.mlh.skinanalyzer.analysis.gushang.GushangSkinEngine
 import com.mlh.skinanalyzer.analysis.oem.OemAnalysisBundle
 import com.mlh.skinanalyzer.analysis.oem.OemSkinEngine
 import com.mlh.skinanalyzer.analysis.ReportGenerator
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
 import com.mlh.skinanalyzer.analysis.SkinAnalyzer
+import com.mlh.skinanalyzer.MlhApp
 import com.mlh.skinanalyzer.data.AnalysisSession
 import com.mlh.skinanalyzer.data.AppDatabase
 import com.mlh.skinanalyzer.data.CareGuide
@@ -83,6 +86,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * or synthetic frames so UI + informe can be tested without the tablet.
      */
     var demoMode by mutableStateOf(false)
+        private set
+
+    /** Gushang SkinDetect license status (updated from Application + refresh). */
+    var gushangLicenseStatus by mutableStateOf(GushangLicense.lastMessage)
+        private set
+    var gushangActivated by mutableStateOf(false)
         private set
 
     private val prefs = app.getSharedPreferences("mlh_prefs", Context.MODE_PRIVATE)
@@ -206,7 +215,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } else {
             savedDemo
         }
+        refreshGushangStatus()
         refreshHardware()
+    }
+
+    fun refreshGushangStatus() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val app = getApplication<Application>()
+            val ok = if (app is MlhApp) {
+                app.refreshGushangLicense()
+            } else {
+                GushangLicense.ensureRegistered(app)
+            }
+            gushangActivated = ok
+            gushangLicenseStatus = GushangLicense.lastMessage
+        }
     }
 
     fun enableDemoMode(enabled: Boolean) {
@@ -359,55 +382,61 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             analyzing = true
             val oemEngine = OemSkinEngine(getApplication())
+            val gushangEngine = GushangSkinEngine(getApplication())
             try {
                 val patient = withContext(Dispatchers.IO) { patientsDao.getById(patientId) }
                 if (patient == null) {
                     userMessage = "No se encontró el paciente para analizar."
                     return@launch
                 }
+                // Brief §5: if license missing, stop before analysis.
+                refreshGushangStatus()
+                delayBrief()
+                if (!GushangLicense.isActivated && !demoMode) {
+                    userMessage = GushangLicense.lastMessage
+                    gushangLicenseStatus = GushangLicense.lastMessage
+                    gushangActivated = false
+                    // Still allow OEM libsalon / heuristic fallback so clinic is not blocked,
+                    // but surface the license warning.
+                    Log.w("MLH", "Gushang not activated — ${GushangLicense.lastMessage}")
+                }
+
                 var oemBundle: OemAnalysisBundle? = null
                 var result: SkinAnalysisResult
                 val pathsOut: Map<String, String>
+                var engineLabel = "heurístico"
 
-                if (oemEngine.canAnalyze(sessionDir)) {
+                val gushangResult = if (GushangLicense.isActivated) {
+                    withContext(Dispatchers.Default) {
+                        gushangEngine.analyze(sessionDir, patient.age)
+                    }
+                } else {
+                    null
+                }
+
+                if (gushangResult != null) {
+                    result = filterMetrics(gushangResult)
+                    pathsOut = imagePaths
+                    engineLabel = "Gushang SkinDetect"
+                } else if (oemEngine.canAnalyze(sessionDir)) {
                     oemBundle = withContext(Dispatchers.Default) {
                         oemEngine.analyze(sessionDir, patient.age)
                     }
-                }
-                if (oemBundle != null) {
-                    result = filterMetrics(oemEngine.toSkinAnalysisResult(oemBundle, patient.age))
-                    pathsOut = imagePaths
-                } else {
-                    val bitmaps = withContext(Dispatchers.IO) {
-                        val map = LinkedHashMap<String, Bitmap>()
-                        imagePaths.forEach { (key, path) ->
-                            decodeBitmap(path)?.let { map[key] = it }
-                        }
-                        val derived = SkinAnalyzer.deriveSpectralMaps(
-                            white = map["White"],
-                            uv = map["UV"],
-                            woods = map["Wood's"],
+                    if (oemBundle != null) {
+                        result = filterMetrics(oemEngine.toSkinAnalysisResult(oemBundle, patient.age))
+                        pathsOut = imagePaths
+                        engineLabel = "OEM libsalon"
+                    } else {
+                        val bitmaps = loadHeuristicBitmaps(imagePaths)
+                        result = filterMetrics(
+                            withContext(Dispatchers.Default) {
+                                SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
+                            },
                         )
-                        map["Orange"]?.let { map.putIfAbsent("Brown", it) }
-                        map["Brown"]?.let { map.putIfAbsent("Orange", it) }
-                        derived.forEach { (k, bmp) ->
-                            if (!map.containsKey(k)) map[k] = bmp
-                        }
-                        map to imagePaths.toMutableMap().also { m ->
-                            derived.forEach { (k, bmp) ->
-                                if (!m.containsKey(k)) {
-                                    val out = File(
-                                        getApplication<Application>().filesDir,
-                                        "sessions/derived_${k}_${System.currentTimeMillis()}.jpg",
-                                    ).also { it.parentFile?.mkdirs() }
-                                    out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
-                                    m[k] = out.absolutePath
-                                }
-                            }
-                            m["Orange"]?.let { m.putIfAbsent("Brown", it) }
-                            m["Brown"]?.let { m.putIfAbsent("Orange", it) }
-                        }
+                        pathsOut = bitmaps.second
                     }
+                } else {
+                    val bitmaps = loadHeuristicBitmaps(imagePaths)
                     result = filterMetrics(
                         withContext(Dispatchers.Default) {
                             SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
@@ -415,6 +444,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     pathsOut = bitmaps.second
                 }
+
+                if (!GushangLicense.isActivated && !demoMode) {
+                    result = result.copy(
+                        overview = "⚠ ${GushangLicense.lastMessage}\n${result.overview}",
+                    )
+                }
+                Log.i("MLH", "Analysis engine=$engineLabel metrics=${result.metrics.size}")
 
                 lastResult = result
                 val session = AnalysisSession(
@@ -445,9 +481,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 userMessage = "Error al analizar: ${e.message ?: e.javaClass.simpleName}"
             } finally {
                 oemEngine.close()
+                gushangEngine.close()
                 analyzing = false
             }
         }
+    }
+
+    private suspend fun delayBrief() {
+        // Allow background register thread to finish if still running.
+        kotlinx.coroutines.delay(200)
+    }
+
+    private suspend fun loadHeuristicBitmaps(
+        imagePaths: Map<String, String>,
+    ): Pair<LinkedHashMap<String, Bitmap>, Map<String, String>> = withContext(Dispatchers.IO) {
+        val map = LinkedHashMap<String, Bitmap>()
+        imagePaths.forEach { (key, path) ->
+            decodeBitmap(path)?.let { map[key] = it }
+        }
+        val derived = SkinAnalyzer.deriveSpectralMaps(
+            white = map["White"],
+            uv = map["UV"],
+            woods = map["Wood's"],
+        )
+        map["Orange"]?.let { map.putIfAbsent("Brown", it) }
+        map["Brown"]?.let { map.putIfAbsent("Orange", it) }
+        derived.forEach { (k, bmp) ->
+            if (!map.containsKey(k)) map[k] = bmp
+        }
+        val paths = imagePaths.toMutableMap().also { m ->
+            derived.forEach { (k, bmp) ->
+                if (!m.containsKey(k)) {
+                    val out = File(
+                        getApplication<Application>().filesDir,
+                        "sessions/derived_${k}_${System.currentTimeMillis()}.jpg",
+                    ).also { it.parentFile?.mkdirs() }
+                    out.outputStream().use { bmp.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                    m[k] = out.absolutePath
+                }
+            }
+            m["Orange"]?.let { m.putIfAbsent("Brown", it) }
+            m["Brown"]?.let { m.putIfAbsent("Orange", it) }
+        }
+        map to paths
     }
 
     suspend fun buildSharePayload(
