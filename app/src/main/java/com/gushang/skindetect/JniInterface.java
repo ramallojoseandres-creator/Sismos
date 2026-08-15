@@ -2,7 +2,7 @@ package com.gushang.skindetect;
 
 import android.util.Log;
 
-/* loaded from: classes2.dex */
+/* loaded from: classes2.dex — load order: OpenCV deps before SkinDetect */
 public class JniInterface {
     private static String TAG;
 
@@ -45,6 +45,17 @@ public class JniInterface {
     public static native float skinWhiteness(String str, String str2, byte[] bArr, int i, int i2);
 
     static {
+        // Circular NEEDED between opencv_java3 ↔ xfeatures2d; load both before SkinDetect.
+        try {
+            System.loadLibrary("opencv_java3");
+        } catch (UnsatisfiedLinkError e) {
+            Log.e("gushang", "opencv_java3 preload: " + e.getMessage());
+        }
+        try {
+            System.loadLibrary("xfeatures2d");
+        } catch (UnsatisfiedLinkError e) {
+            Log.e("gushang", "xfeatures2d preload: " + e.getMessage());
+        }
         System.loadLibrary("SkinDetect");
         TAG = "gushang";
     }

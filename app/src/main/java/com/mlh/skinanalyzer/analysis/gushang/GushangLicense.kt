@@ -88,8 +88,16 @@ object GushangLicense {
             lastMessage = "libSkinDetect no cargó: ${e.message}"
             Log.e(TAG, lastMessage, e)
             false
+        } catch (e: NoClassDefFoundError) {
+            lastMessage = "JniInterface no disponible (nativas): ${e.message}"
+            Log.e(TAG, lastMessage, e)
+            false
         } catch (e: Exception) {
             lastMessage = "Error licencia: ${e.message}"
+            Log.e(TAG, lastMessage, e)
+            false
+        } catch (e: Throwable) {
+            lastMessage = "Error nativo: ${e.message}"
             Log.e(TAG, lastMessage, e)
             false
         }

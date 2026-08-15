@@ -326,23 +326,27 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch(Dispatchers.IO) {
             runCatching {
                 val detection = Mj008Hardware.detect(getApplication())
-                mj008Detection = detection
                 lightController.setCameraVariant(detection.cameraVariant)
-                hardwareDiagnostics = detection.diagnostics
                 // NEVER open USB here — only USBMonitor in Captura owns the device.
-                // Opening USB-XU / claimInterface before UVC hangs MJ-008.
-                lightController.close() // ensure no leftover UART from lab
-                hardwareStatus = when {
+                lightController.close()
+                val status = when {
                     detection.usbCameras.isNotEmpty() || detection.usbXuCameraPresent ->
                         "MJ-008: USB3.0 detectada · luces vía UVC en Captura · sin nube"
                     else ->
                         "${detection.summary} · abra Captura (USB) o active Demo"
                 }
                 Log.i("MLH", "HW diagnostics (no USB open):\n${detection.diagnostics}")
+                withContext(Dispatchers.Main) {
+                    mj008Detection = detection
+                    hardwareDiagnostics = detection.diagnostics
+                    hardwareStatus = status
+                }
             }.onFailure {
                 Log.e("MLH", "refreshHardware", it)
-                hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
-                hardwareDiagnostics = it.stackTraceToString().take(800)
+                withContext(Dispatchers.Main) {
+                    hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
+                    hardwareDiagnostics = it.stackTraceToString().take(800)
+                }
             }
         }
     }
