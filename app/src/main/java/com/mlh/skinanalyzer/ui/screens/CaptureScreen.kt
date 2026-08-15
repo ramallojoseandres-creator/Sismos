@@ -352,7 +352,7 @@ fun CaptureScreen(
                     style = MaterialTheme.typography.headlineMedium,
                 )
                 Text(
-                    patient?.let { "${it.name} · ${it.age} años" } ?: "Paciente",
+                    patient?.let { "${it.displayName} · ${it.currentAge()} años" } ?: "Paciente",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Ink.copy(alpha = 0.6f),
                 )
@@ -609,7 +609,7 @@ fun CaptureScreen(
                     Spacer(Modifier.width(10.dp))
                     Text(
                         when {
-                            vm.analyzing -> "Analizando, por favor espere…"
+                            vm.analyzing -> vm.analyzingPhase.ifBlank { "Analizando indicadores…" }
                             else -> captureBanner.ifBlank { "Capturando, por favor espere…" }
                         },
                     )

@@ -176,7 +176,7 @@ fun ReportScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
             }
             Column(Modifier.weight(1f)) {
-                Text("Informe · ${p.name}", style = MaterialTheme.typography.headlineMedium)
+                Text("Informe · ${p.displayName}", style = MaterialTheme.typography.headlineMedium)
                 Text(
                     SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES")).format(Date(s.createdAt)),
                     style = MaterialTheme.typography.bodyMedium,
@@ -204,12 +204,12 @@ fun ReportScreen(
                 onClick = {
                     scope.launch {
                         runCatching {
-                            val (text, pdf) = withContext(Dispatchers.IO) {
-                                vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt)
+                            val (text, pdf, _) = withContext(Dispatchers.IO) {
+                                vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt, s)
                             }
                             ReportSharer.shareEmail(
                                 context,
-                                subject = "Informe de piel — ${p.name} · Dra. MLH",
+                                subject = "Informe de piel — ${p.fullName} · Dra. MLH",
                                 body = text,
                                 pdf = pdf,
                                 toEmail = p.email.ifBlank { null },
@@ -230,14 +230,14 @@ fun ReportScreen(
                 onClick = {
                     scope.launch {
                         runCatching {
-                            val (text, pdf) = withContext(Dispatchers.IO) {
-                                vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt)
+                            val (text, pdf, _) = withContext(Dispatchers.IO) {
+                                vm.buildSharePayload(p, r, s.moisturePercent, s.createdAt, s)
                             }
                             ReportSharer.shareWhatsAppBusiness(
                                 context,
                                 body = text.take(900),
                                 pdf = pdf,
-                                phoneE164 = p.phone.ifBlank { null },
+                                phoneE164 = p.phoneRaw.ifBlank { p.phone }.ifBlank { null },
                             )
                         }.onFailure {
                             vm.showUserMessage("No se pudo abrir WhatsApp: ${it.message ?: "error"}")
@@ -334,8 +334,29 @@ fun ReportScreen(
                             )
                         }
                         Spacer(Modifier.height(6.dp))
+                        val chronological = s.ageAtAnalysis.takeIf { it > 0 } ?: p.ageAt(s.createdAt)
+                        val delta = r.skinAge - chronological
+                        Text(
+                            "Edad cutánea: ${r.skinAge} años",
+                            style = MaterialTheme.typography.headlineMedium,
+                            color = Accent,
+                        )
+                        Text(
+                            "Edad real al análisis: $chronological años · " +
+                                when {
+                                    delta > 0 -> "aparenta +$delta años (estimación cosmética)"
+                                    delta < 0 -> "aparenta ${-delta} años menos (estimación cosmética)"
+                                    else -> "alineada con la edad cronológica"
+                                },
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = when {
+                                delta > 2 -> Color(0xFFB71C1C)
+                                delta < -2 -> Color(0xFF2E7D32)
+                                else -> Ink.copy(alpha = 0.7f)
+                            },
+                        )
+                        Spacer(Modifier.height(8.dp))
                         Text("Tipo de piel: ${r.skinType}", style = MaterialTheme.typography.titleLarge)
-                        Text("Edad cutánea: ${r.skinAge} años", style = MaterialTheme.typography.titleLarge, color = Accent)
                         s.moisturePercent?.let {
                             Text("Humedad: ${"%.1f".format(it)}%", style = MaterialTheme.typography.bodyLarge)
                         }
@@ -685,29 +706,59 @@ fun SessionListScreen(
                 Icon(Icons.AutoMirrored.Outlined.ArrowBack, null)
             }
             Text(
-                "Historial · ${patient?.name ?: ""}",
+                "Historial · ${patient?.displayName ?: ""}",
                 style = MaterialTheme.typography.headlineMedium,
                 modifier = Modifier.weight(1f),
             )
         }
+        patient?.let { p ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .background(Cream, RoundedCornerShape(4.dp))
+                    .padding(14.dp),
+            ) {
+                Text(p.displayName, style = MaterialTheme.typography.titleLarge)
+                Text(
+                    "${p.currentAge()} años · ${p.sexLabel} · nasc. ${p.birthDate}",
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Ink.copy(alpha = 0.7f),
+                )
+                if (p.phoneRaw.isNotBlank()) {
+                    Text(p.phoneRaw, style = MaterialTheme.typography.bodyMedium)
+                }
+                if (p.address.isNotBlank()) {
+                    Text(p.address, style = MaterialTheme.typography.bodyMedium, color = Ink.copy(alpha = 0.55f))
+                }
+            }
+            Spacer(Modifier.height(12.dp))
+        }
         Button(
             onClick = onNew,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(54.dp),
             colors = ButtonDefaults.buttonColors(containerColor = Accent),
             shape = RoundedCornerShape(4.dp),
-        ) { Text("Nuevo análisis") }
+        ) { Text("NUEVO ANÁLISIS") }
         Spacer(Modifier.height(8.dp))
         OutlinedButton(
             onClick = onCompare,
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(4.dp),
-        ) { Text("Comparar historial") }
+            enabled = sessions.size >= 2,
+        ) { Text("Comparar dos sesiones") }
         Spacer(Modifier.height(12.dp))
+        Text("Historial de análisis", style = MaterialTheme.typography.titleLarge)
+        Spacer(Modifier.height(8.dp))
         if (sessions.isEmpty()) {
             Text("Sin análisis previos.", color = Ink.copy(alpha = 0.55f))
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 items(sessions) { sessionItem ->
+                    val ageLabel = sessionItem.ageAtAnalysis.takeIf { it > 0 }
+                        ?: patient?.ageAt(sessionItem.createdAt)
+                        ?: 0
                     Column(
                         Modifier
                             .fillMaxWidth()
@@ -719,7 +770,7 @@ fun SessionListScreen(
                             style = MaterialTheme.typography.titleLarge,
                         )
                         Text(
-                            "${sessionItem.skinType} · edad cutánea ${sessionItem.skinAge}",
+                            "$ageLabel años · ${sessionItem.skinType} · edad cutánea ${sessionItem.skinAge}",
                             style = MaterialTheme.typography.bodyMedium,
                         )
                         Spacer(Modifier.height(8.dp))

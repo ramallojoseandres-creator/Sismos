@@ -16,6 +16,7 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.FacialProportionAnalyzer
+import com.mlh.skinanalyzer.analysis.HtmlReportExporter
 import com.mlh.skinanalyzer.analysis.gushang.GushangLicense
 import com.mlh.skinanalyzer.analysis.gushang.GushangSkinEngine
 import com.mlh.skinanalyzer.analysis.ReportGenerator
@@ -29,11 +30,17 @@ import com.mlh.skinanalyzer.data.ClinicProfile
 import com.mlh.skinanalyzer.data.IndicatorPref
 import com.mlh.skinanalyzer.data.LocalCatalog
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.data.PhoneNormalizer
+import com.mlh.skinanalyzer.data.PendingPatientImport
 import com.mlh.skinanalyzer.data.ProductRec
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
+import com.mlh.skinanalyzer.ui.screens.PatientListRow
+import com.mlh.skinanalyzer.ui.screens.WifiImportPreview
+import com.mlh.skinanalyzer.wifi.PatientWifiServer
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -47,9 +54,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val indicatorDao = db.indicatorPrefDao()
     private val careDao = db.careGuideDao()
     private val productDao = db.productDao()
+    private val pendingImportDao = db.pendingImportDao()
     private val gson = Gson()
 
     var patients by mutableStateOf<List<Patient>>(emptyList())
+        private set
+    var patientRows by mutableStateOf<List<PatientListRow>>(emptyList())
         private set
     private var allPatients: List<Patient> = emptyList()
     var recentSessions by mutableStateOf<List<AnalysisSession>>(emptyList())
@@ -65,6 +75,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var mj008Detection by mutableStateOf<Mj008Hardware.Detection?>(null)
         private set
     var analyzing by mutableStateOf(false)
+        private set
+    var analyzingPhase by mutableStateOf("")
         private set
     var lastResult by mutableStateOf<SkinAnalysisResult?>(null)
         private set
@@ -92,11 +104,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var gushangActivated by mutableStateOf(false)
         private set
 
+    var phoneDuplicate by mutableStateOf<Patient?>(null)
+        private set
+
     private val prefs = app.getSharedPreferences("mlh_prefs", Context.MODE_PRIVATE)
 
     val lightController = Mj008LightController(app)
 
     private var uvcSession: Mj008UvcSession? = null
+    private var wifiServer: PatientWifiServer? = null
+    var wifiPin by mutableStateOf<String?>(null)
+        private set
+    var wifiUrl by mutableStateOf<String?>(null)
+        private set
+    var wifiServerError by mutableStateOf<String?>(null)
+        private set
 
     fun clearUserMessage() {
         userMessage = null
@@ -118,7 +140,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         releaseUvcSession()
         findPatientById(patientId)?.let { cached ->
             capturePatient = cached
-            Log.i("MLH", "openCapture cached id=$patientId name=${cached.name}")
+            Log.i("MLH", "openCapture cached id=$patientId name=${cached.displayName}")
             onNavigate(patientId)
             return
         }
@@ -247,12 +269,45 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             allPatients
         } else {
             allPatients.filter {
-                it.name.contains(q, ignoreCase = true) ||
+                it.firstName.contains(q, ignoreCase = true) ||
+                    it.lastName.contains(q, ignoreCase = true) ||
                     it.phone.contains(q, ignoreCase = true) ||
-                    it.email.contains(q, ignoreCase = true) ||
-                    it.notes.contains(q, ignoreCase = true)
+                    it.phoneRaw.contains(q, ignoreCase = true) ||
+                    it.displayName.contains(q, ignoreCase = true)
             }
         }
+        refreshPatientRows()
+    }
+
+    private fun refreshPatientRows() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val rows = patients.map { p ->
+                PatientListRow(
+                    patient = p,
+                    sessionCount = patientsDao.sessionCount(p.id),
+                    lastSessionAt = patientsDao.lastSessionAt(p.id),
+                )
+            }
+            withContext(Dispatchers.Main) { patientRows = rows }
+        }
+    }
+
+    fun checkPhoneDuplicate(rawPhone: String, excludeId: Long = 0L) {
+        viewModelScope.launch(Dispatchers.IO) {
+            val normalized = PhoneNormalizer.normalize(rawPhone)
+            if (normalized.length < 7) {
+                withContext(Dispatchers.Main) { phoneDuplicate = null }
+                return@launch
+            }
+            val found = patientsDao.findByPhone(normalized)
+            withContext(Dispatchers.Main) {
+                phoneDuplicate = found?.takeIf { it.id != excludeId }
+            }
+        }
+    }
+
+    fun clearPhoneDuplicate() {
+        phoneDuplicate = null
     }
 
     fun refreshHardware() {
@@ -329,13 +384,118 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     fun savePatient(patient: Patient, onDone: (Long) -> Unit) {
         viewModelScope.launch {
+            val normalized = PhoneNormalizer.normalize(patient.phoneRaw.ifBlank { patient.phone })
+            if (normalized.length < 7) {
+                userMessage = "Teléfono obligatorio para guardar la ficha."
+                return@launch
+            }
+            val existing = withContext(Dispatchers.IO) { patientsDao.findByPhone(normalized) }
+            if (existing != null && existing.id != patient.id) {
+                phoneDuplicate = existing
+                userMessage = "Ya existe una ficha con ese teléfono: ${existing.displayName}"
+                return@launch
+            }
             val now = System.currentTimeMillis()
             val toSave = patient.copy(
+                phone = normalized,
+                phoneRaw = patient.phoneRaw.ifBlank { patient.phone },
                 updatedAt = now,
                 createdAt = if (patient.id == 0L) now else patient.createdAt,
             )
-            val id = withContext(Dispatchers.IO) { patientsDao.upsert(toSave) }
-            onDone(if (patient.id == 0L) id else patient.id)
+            val id = withContext(Dispatchers.IO) {
+                if (toSave.id == 0L) patientsDao.insert(toSave) else {
+                    patientsDao.update(toSave)
+                    toSave.id
+                }
+            }
+            phoneDuplicate = null
+            onDone(id)
+        }
+    }
+
+    fun startWifiImportSession() {
+        stopWifiImportSession()
+        val pin = PatientWifiServer.generatePin()
+        wifiPin = pin
+        val ip = PatientWifiServer.wifiIpv4(getApplication())
+        if (ip == null) {
+            wifiUrl = null
+            wifiServerError = "Conecta la tablet a una red WiFi"
+            return
+        }
+        wifiUrl = "http://$ip:${PatientWifiServer.PORT}"
+        val server = PatientWifiServer(getApplication(), pin) { batch ->
+            viewModelScope.launch(Dispatchers.IO) {
+                pendingImportDao.insertAll(batch)
+            }
+        }
+        wifiServer = server
+        if (!server.startSafe()) {
+            wifiServerError = server.lastError ?: "No se pudo abrir el puerto 8080"
+            wifiServer = null
+        } else {
+            wifiServerError = null
+        }
+    }
+
+    fun stopWifiImportSession() {
+        wifiServer?.stopSafe()
+        wifiServer = null
+        wifiPin = null
+        wifiUrl = null
+        wifiServerError = null
+    }
+
+    fun observePendingImports(): Flow<List<PendingPatientImport>> = pendingImportDao.observeAll()
+
+    fun previewPendingImports(items: List<PendingPatientImport>): List<WifiImportPreview> {
+        // Sync lookup from cached patients; refine in confirm
+        return items.map { item ->
+            val existing = allPatients.firstOrNull { it.phone == item.phone }
+            WifiImportPreview(item, existing?.displayName)
+        }
+    }
+
+    fun confirmPendingImports(previews: List<WifiImportPreview>, onDone: (Int) -> Unit) {
+        viewModelScope.launch {
+            var n = 0
+            withContext(Dispatchers.IO) {
+                previews.forEach { row ->
+                    val item = row.item
+                    val existing = patientsDao.findByPhone(item.phone)
+                    val now = System.currentTimeMillis()
+                    if (existing != null) {
+                        patientsDao.update(
+                            existing.copy(
+                                firstName = item.firstName,
+                                lastName = item.lastName,
+                                birthDate = item.birthDate,
+                                phoneRaw = item.phoneRaw,
+                                sex = item.sex,
+                                address = item.address,
+                                updatedAt = now,
+                            ),
+                        )
+                    } else {
+                        patientsDao.insert(
+                            Patient(
+                                firstName = item.firstName,
+                                lastName = item.lastName,
+                                birthDate = item.birthDate,
+                                phone = item.phone,
+                                phoneRaw = item.phoneRaw,
+                                sex = item.sex,
+                                address = item.address,
+                                createdAt = now,
+                                updatedAt = now,
+                            ),
+                        )
+                    }
+                    n++
+                }
+                pendingImportDao.clear()
+            }
+            onDone(n)
         }
     }
 
@@ -379,6 +539,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch {
             analyzing = true
+            analyzingPhase = "Preparando análisis…"
             val gushangEngine = GushangSkinEngine(getApplication())
             try {
                 val patient = withContext(Dispatchers.IO) { patientsDao.getById(patientId) }
@@ -387,6 +548,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
 
+                analyzingPhase = "Comprobando licencia Gushang…"
                 refreshGushangStatus()
                 withContext(Dispatchers.IO) {
                     val app = getApplication<Application>()
@@ -402,9 +564,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 when {
                     // Explicit Demo (Settings only) — never as silent USB fallback.
                     demoMode -> {
+                        analyzingPhase = "Modo Demo — estimando indicadores…"
                         val bitmaps = loadHeuristicBitmaps(imagePaths)
+                        val ageAt = patient.currentAge()
                         val demo = withContext(Dispatchers.Default) {
-                            SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
+                            SkinAnalyzer.analyze(bitmaps.first, ageAt, moisture)
                         }
                         result = filterMetrics(
                             demo.copy(
@@ -425,8 +589,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         return@launch
                     }
                     else -> {
+                        analyzingPhase = "Analizando con SkinDetect (sebo, poros, pigmentación…)"
+                        val ageAt = patient.currentAge()
                         val gushangResult = withContext(Dispatchers.Default) {
-                            gushangEngine.analyze(sessionDir, patient.age)
+                            gushangEngine.analyze(sessionDir, ageAt)
                         }
                         if (gushangResult == null) {
                             userMessage =
@@ -441,16 +607,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                 }
 
+                analyzingPhase = "Guardando sesión…"
                 Log.i(
                     "MLH",
                     "Analysis engine=${result.analysisEngine} clinical=${result.isClinicalLicensed}",
                 )
 
                 lastResult = result
+                val ageAt = patient.ageAt(System.currentTimeMillis())
                 val session = AnalysisSession(
                     patientId = patientId,
                     skinType = result.skinType,
                     skinAge = result.skinAge,
+                    ageAtAnalysis = ageAt,
                     overview = result.overview,
                     metricsJson = gson.toJson(result),
                     imagePathsJson = gson.toJson(pathsOut),
@@ -475,6 +644,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } finally {
                 gushangEngine.close()
                 analyzing = false
+                analyzingPhase = ""
             }
         }
     }
@@ -518,7 +688,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         result: SkinAnalysisResult,
         moisture: Float?,
         time: Long,
-    ): Pair<String, File> {
+        session: AnalysisSession? = null,
+    ): Triple<String, File, File> {
         val keys = result.priorityKeys.ifEmpty {
             result.metrics.sortedByDescending { it.score }.take(3).map { it.key }
         }
@@ -532,7 +703,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pdf = ReportGenerator.writePdf(
             getApplication(), patient, filtered, moisture, time, profile, guides, products,
         )
-        return text to pdf
+        val htmlSession = session ?: AnalysisSession(
+            patientId = patient.id,
+            createdAt = time,
+            skinType = filtered.skinType,
+            skinAge = filtered.skinAge,
+            ageAtAnalysis = patient.ageAt(time),
+            overview = filtered.overview,
+            recommendations = "",
+        )
+        val html = HtmlReportExporter.writeHtml(
+            getApplication(), patient, htmlSession, filtered, profile,
+        )
+        return Triple(text, pdf, html)
     }
 
     /** Compare two sessions offline (OEM ComparisonHistory without cloud). */

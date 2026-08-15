@@ -1,21 +1,59 @@
 package com.mlh.skinanalyzer.data
 
 import androidx.room.Entity
+import androidx.room.Index
 import androidx.room.PrimaryKey
 
-@Entity(tableName = "patients")
+@Entity(
+    tableName = "patients",
+    indices = [Index(value = ["phone"], unique = true)],
+)
 data class Patient(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
-    val name: String,
-    val gender: String,
-    val age: Int,
-    val phone: String = "",
+    val firstName: String,
+    val lastName: String,
+    /** Fecha de nacimiento ISO `yyyy-MM-dd` — nunca se almacena la edad. */
+    val birthDate: String,
+    /** Teléfono normalizado (clave de deduplicación). */
+    val phone: String,
+    /** Teléfono tal como lo escribió el usuario. */
+    val phoneRaw: String = "",
+    /** `M` o `F` — el motor lo usa. */
+    val sex: String = PatientSex.F.code,
+    val address: String = "",
     val email: String = "",
     val notes: String = "",
     val photoPath: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
-)
+) {
+    val displayName: String
+        get() = listOf(lastName.trim(), firstName.trim())
+            .filter { it.isNotEmpty() }
+            .joinToString(", ")
+            .ifBlank { firstName.ifBlank { lastName } }
+
+    val fullName: String
+        get() = listOf(firstName.trim(), lastName.trim())
+            .filter { it.isNotEmpty() }
+            .joinToString(" ")
+
+    val sexLabel: String get() = PatientSex.fromCode(sex).label
+
+    fun currentAge(): Int = PatientAge.yearsAt(birthDate)
+
+    fun ageAt(millis: Long): Int = PatientAge.yearsAt(birthDate, millis)
+
+    /** Compatibilidad con pantallas/informes que esperaban `name` / `gender` / `age`. */
+    @Deprecated("Use displayName / fullName", ReplaceWith("displayName"))
+    val name: String get() = displayName
+
+    @Deprecated("Use sex / sexLabel", ReplaceWith("sexLabel"))
+    val gender: String get() = sexLabel
+
+    @Deprecated("Use currentAge() — age is never stored", ReplaceWith("currentAge()"))
+    val age: Int get() = currentAge()
+}
 
 @Entity(tableName = "analysis_sessions")
 data class AnalysisSession(
@@ -24,6 +62,8 @@ data class AnalysisSession(
     val createdAt: Long = System.currentTimeMillis(),
     val skinType: String = "",
     val skinAge: Int = 0,
+    /** Edad cronológica del paciente el día de la captura (congelada). */
+    val ageAtAnalysis: Int = 0,
     val overview: String = "",
     val metricsJson: String = "",
     val imagePathsJson: String = "",
@@ -35,6 +75,8 @@ data class AnalysisSession(
     val oemIndicatorsJson: String = "",
     val sessionDir: String = "",
     val notes: String = "",
+    /** Recomendaciones editables por la médico antes de exportar. */
+    val editableRecommendations: String = "",
 )
 
 /** Clinic / consultorio profile — replaces OEM cloud “shop”. */
@@ -48,7 +90,7 @@ data class ClinicProfile(
     val email: String = "",
     val whatsapp: String = "",
     val address: String = "",
-    val footerNote: String = "Informe orientativo para consulta estética. No sustituye diagnóstico médico.",
+    val footerNote: String = "Análisis cosmético de piel. No constituye diagnóstico médico. Cualquier lesión sospechosa requiere evaluación dermatológica presencial.",
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
@@ -79,4 +121,18 @@ data class ProductRec(
     val category: String,
     val description: String,
     val howToUse: String = "",
+)
+
+/** Cola WiFi de fichas recibidas, aún no confirmadas en Room. */
+@Entity(tableName = "pending_patient_imports")
+data class PendingPatientImport(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val firstName: String,
+    val lastName: String,
+    val birthDate: String,
+    val phoneRaw: String,
+    val phone: String,
+    val sex: String,
+    val address: String = "",
+    val receivedAt: Long = System.currentTimeMillis(),
 )

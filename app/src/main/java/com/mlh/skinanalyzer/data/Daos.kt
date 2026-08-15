@@ -10,23 +10,30 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface PatientDao {
-    @Query("SELECT * FROM patients ORDER BY updatedAt DESC, createdAt DESC")
+    @Query("SELECT * FROM patients ORDER BY lastName COLLATE NOCASE ASC, firstName COLLATE NOCASE ASC")
     fun observeAll(): Flow<List<Patient>>
 
     @Query("SELECT * FROM patients WHERE id = :id")
     suspend fun getById(id: Long): Patient?
 
+    @Query("SELECT * FROM patients WHERE phone = :phone LIMIT 1")
+    suspend fun findByPhone(phone: String): Patient?
+
     @Query(
         """
         SELECT * FROM patients
-        WHERE name LIKE '%' || :q || '%'
+        WHERE firstName LIKE '%' || :q || '%'
+           OR lastName LIKE '%' || :q || '%'
            OR phone LIKE '%' || :q || '%'
-           OR email LIKE '%' || :q || '%'
-           OR notes LIKE '%' || :q || '%'
-        ORDER BY updatedAt DESC
+           OR phoneRaw LIKE '%' || :q || '%'
+           OR address LIKE '%' || :q || '%'
+        ORDER BY lastName COLLATE NOCASE ASC, firstName COLLATE NOCASE ASC
         """,
     )
     fun search(q: String): Flow<List<Patient>>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(patient: Patient): Long
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(patient: Patient): Long
@@ -39,6 +46,18 @@ interface PatientDao {
 
     @Query("DELETE FROM analysis_sessions WHERE patientId = :patientId")
     suspend fun deleteSessionsForPatient(patientId: Long)
+
+    @Query("SELECT COUNT(*) FROM analysis_sessions WHERE patientId = :patientId")
+    suspend fun sessionCount(patientId: Long): Int
+
+    @Query(
+        """
+        SELECT createdAt FROM analysis_sessions
+        WHERE patientId = :patientId
+        ORDER BY createdAt DESC LIMIT 1
+        """,
+    )
+    suspend fun lastSessionAt(patientId: Long): Long?
 }
 
 @Dao
@@ -55,14 +74,41 @@ interface SessionDao {
     @Query("SELECT * FROM analysis_sessions ORDER BY createdAt DESC LIMIT 40")
     fun observeRecent(): Flow<List<AnalysisSession>>
 
+    @Query("SELECT COUNT(*) FROM analysis_sessions WHERE patientId = :patientId")
+    suspend fun countForPatient(patientId: Long): Int
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(session: AnalysisSession): Long
 
     @Query("UPDATE analysis_sessions SET oemIndicatorsJson = :json WHERE id = :id")
     suspend fun updateOemIndicators(id: Long, json: String)
 
+    @Query("UPDATE analysis_sessions SET editableRecommendations = :text WHERE id = :id")
+    suspend fun updateEditableRecommendations(id: Long, text: String)
+
     @Delete
     suspend fun delete(session: AnalysisSession)
+}
+
+@Dao
+interface PendingImportDao {
+    @Query("SELECT * FROM pending_patient_imports ORDER BY receivedAt ASC")
+    fun observeAll(): Flow<List<PendingPatientImport>>
+
+    @Query("SELECT * FROM pending_patient_imports ORDER BY receivedAt ASC")
+    suspend fun listAll(): List<PendingPatientImport>
+
+    @Query("SELECT COUNT(*) FROM pending_patient_imports")
+    fun observeCount(): Flow<Int>
+
+    @Insert
+    suspend fun insertAll(items: List<PendingPatientImport>)
+
+    @Query("DELETE FROM pending_patient_imports")
+    suspend fun clear()
+
+    @Delete
+    suspend fun delete(item: PendingPatientImport)
 }
 
 @Dao

@@ -154,29 +154,24 @@ fun HomeScreen(
             }
             Spacer(Modifier.height(28.dp))
             Button(
-                onClick = onNewAnalysis,
+                onClick = onPatients,
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(54.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
                 shape = RoundedCornerShape(4.dp),
             ) {
-                Icon(Icons.Outlined.Face, contentDescription = null)
-                Spacer(Modifier.width(10.dp))
-                Text("Nuevo análisis")
-            }
-            Spacer(Modifier.height(12.dp))
-            OutlinedButton(
-                onClick = onPatients,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(50.dp),
-                shape = RoundedCornerShape(4.dp),
-            ) {
                 Icon(Icons.Outlined.People, contentDescription = null)
                 Spacer(Modifier.width(10.dp))
-                Text("Pacientes e historial")
+                Text("Pacientes")
             }
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "El análisis se inicia desde el perfil del paciente (NUEVO ANÁLISIS).",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.55f),
+                textAlign = TextAlign.Center,
+            )
             Spacer(Modifier.height(20.dp))
             if (recentSessions.isNotEmpty()) {
                 Text(

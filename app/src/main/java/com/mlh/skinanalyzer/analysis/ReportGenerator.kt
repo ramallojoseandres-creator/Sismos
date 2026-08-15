@@ -38,10 +38,11 @@ object ReportGenerator {
             sb.appendLine("⚠ INFORME NO CLÍNICO — cifras de simulación / no medidas por SkinDetect")
         }
         sb.appendLine("────────────────────────────────────────")
-        sb.appendLine("Paciente: ${patient.name}")
-        sb.appendLine("Sexo: ${patient.gender} · Edad: ${patient.age}")
-        if (patient.phone.isNotBlank()) sb.appendLine("Teléfono: ${patient.phone}")
+        sb.appendLine("Paciente: ${patient.fullName}")
+        sb.appendLine("Sexo: ${patient.sexLabel} · Edad: ${patient.currentAge()}")
+        if (patient.phoneRaw.isNotBlank()) sb.appendLine("Teléfono: ${patient.phoneRaw}")
         if (patient.email.isNotBlank()) sb.appendLine("Email: ${patient.email}")
+        if (patient.address.isNotBlank()) sb.appendLine("Dirección: ${patient.address}")
         sb.appendLine("Fecha: ${df.format(Date(sessionTime))}")
         sb.appendLine()
         sb.appendLine("RESUMEN")
@@ -175,7 +176,7 @@ object ReportGenerator {
         y += 6f
         canvas.drawLine(40f, y, pageWidth - 40f, y, body)
         y += 20f
-        drawWrapped("Paciente: ${patient.name} · ${patient.gender} · ${patient.age} años", body)
+        drawWrapped("Paciente: ${patient.fullName} · ${patient.sexLabel} · ${patient.currentAge()} años", body)
         drawWrapped(
             "Fecha: ${SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES")).format(Date(sessionTime))}",
             muted,
@@ -222,7 +223,7 @@ object ReportGenerator {
         doc.finishPage(page)
 
         val dir = File(context.filesDir, "reports").apply { mkdirs() }
-        val file = File(dir, "MLH_informe_${patient.name.replace(" ", "_")}_$sessionTime.pdf")
+        val file = File(dir, "MLH_informe_${patient.lastName}_${patient.firstName}_$sessionTime.pdf".replace(" ", "_"))
         FileOutputStream(file).use { doc.writeTo(it) }
         doc.close()
         return file
@@ -242,7 +243,7 @@ object ReportGenerator {
         }
         canvas.save()
         canvas.rotate(-28f, pageWidth / 2f, pageHeight / 2f)
-        canvas.drawText("DEMO — NO CLÍNICO", 80f, pageHeight / 2f, stamp)
+        canvas.drawText("SIMULACIÓN — NO CLÍNICO", 60f, pageHeight / 2f, stamp)
         canvas.restore()
     }
 

@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>Cargar fichas — MLH Skin Analyzer</title>
+<style>
+  :root { --ink:#1a1a1a; --accent:#8b3a3a; --bg:#f7f3ee; --card:#fff; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px;
+    background: var(--bg); color: var(--ink); }
+  h1 { font-size: 1.35rem; margin: 0 0 8px; }
+  .hint { color: #666; font-size: 0.9rem; margin-bottom: 16px; }
+  label { display: block; font-size: 0.8rem; color: #555; margin: 10px 0 4px; }
+  input, select, textarea { width: 100%; padding: 12px; font-size: 1rem;
+    border: 1px solid #ccc; border-radius: 6px; background: #fff; }
+  textarea { min-height: 64px; }
+  .row { display: flex; gap: 10px; }
+  .row > * { flex: 1; }
+  button { width: 100%; padding: 14px; margin-top: 14px; font-size: 1rem;
+    border: 0; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; }
+  button.secondary { background: #444; }
+  button:disabled { opacity: 0.5; }
+  .card { background: var(--card); border-radius: 8px; padding: 14px; margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .list-item { display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; padding: 10px 0; border-bottom: 1px solid #eee; }
+  .list-item:last-child { border-bottom: 0; }
+  .err { color: #b71c1c; font-size: 0.9rem; margin-top: 8px; }
+  .ok { color: #2e7d32; font-size: 0.9rem; margin-top: 8px; }
+  .pin-box { font-size: 1.1rem; letter-spacing: 0.2em; font-weight: 700; }
+</style>
+</head>
+<body>
+  <h1>Fichas de pacientes</h1>
+  <p class="hint">Complete las fichas en el teléfono. Al final envíe todo a la tablet en un solo paso.</p>
+
+  <div class="card">
+    <label>PIN de la tablet</label>
+    <input class="pin-box" id="pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••"/>
+  </div>
+
+  <div class="card" id="formCard">
+    <div class="row">
+      <div>
+        <label>Nombre *</label>
+        <input id="firstName" autocomplete="given-name" required/>
+      </div>
+      <div>
+        <label>Apellido *</label>
+        <input id="lastName" autocomplete="family-name" required/>
+      </div>
+    </div>
+    <label>Fecha de nacimiento *</label>
+    <input id="birthDate" type="date" required/>
+    <label>Teléfono *</label>
+    <input id="phone" type="tel" inputmode="tel" required/>
+    <label>Sexo *</label>
+    <select id="sex">
+      <option value="F">Femenino</option>
+      <option value="M">Masculino</option>
+    </select>
+    <label>Dirección (opcional)</label>
+    <textarea id="address"></textarea>
+    <p class="err" id="formErr"></p>
+    <button type="button" id="addBtn">Guardar en lista</button>
+  </div>
+
+  <div class="card">
+    <h1 style="font-size:1.1rem">Lista local (<span id="count">0</span>)</h1>
+    <div id="list"></div>
+    <p class="err" id="sendErr"></p>
+    <p class="ok" id="sendOk"></p>
+    <button type="button" class="secondary" id="sendBtn" disabled>Enviar todo (0 fichas)</button>
+  </div>
+
+<script>
+const items = [];
+let editIndex = -1;
+
+function todayIso() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+document.getElementById('birthDate').max = todayIso();
+
+function clearForm() {
+  firstName.value = ''; lastName.value = ''; birthDate.value = '';
+  phone.value = ''; sex.value = 'F'; address.value = '';
+  formErr.textContent = ''; editIndex = -1;
+  addBtn.textContent = 'Guardar en lista';
+}
+
+function render() {
+  count.textContent = items.length;
+  sendBtn.textContent = 'Enviar todo (' + items.length + ' fichas)';
+  sendBtn.disabled = items.length === 0;
+  list.innerHTML = items.map((p, i) =>
+    '<div class="list-item"><div><strong>' + p.lastName + ', ' + p.firstName +
+    '</strong><br/><span style="color:#666;font-size:0.85rem">' + p.birthDate +
+    ' · ' + p.phone + '</span></div><div>' +
+    '<button type="button" style="width:auto;padding:8px 10px;margin:0 4px 0 0;background:#666" data-e="'+i+'">Editar</button>' +
+    '<button type="button" style="width:auto;padding:8px 10px;margin:0;background:#999" data-d="'+i+'">Quitar</button>' +
+    '</div></div>'
+  ).join('');
+  list.querySelectorAll('[data-e]').forEach(b => b.onclick = () => {
+    const p = items[+b.dataset.e]; editIndex = +b.dataset.e;
+    firstName.value = p.firstName; lastName.value = p.lastName;
+    birthDate.value = p.birthDate; phone.value = p.phone;
+    sex.value = p.sex; address.value = p.address || '';
+    addBtn.textContent = 'Actualizar ficha';
+  });
+  list.querySelectorAll('[data-d]').forEach(b => b.onclick = () => {
+    items.splice(+b.dataset.d, 1); render();
+  });
+}
+
+addBtn.onclick = () => {
+  formErr.textContent = '';
+  const p = {
+    firstName: firstName.value.trim(),
+    lastName: lastName.value.trim(),
+    birthDate: birthDate.value,
+    phone: phone.value.trim(),
+    sex: sex.value,
+    address: address.value.trim()
+  };
+  if (!p.firstName || !p.lastName || !p.birthDate || !p.phone) {
+    formErr.textContent = 'Complete los campos obligatorios.'; return;
+  }
+  if (p.birthDate > todayIso()) {
+    formErr.textContent = 'La fecha no puede ser futura.'; return;
+  }
+  if (editIndex >= 0) { items[editIndex] = p; } else { items.push(p); }
+  clearForm(); render();
+};
+
+sendBtn.onclick = async () => {
+  sendErr.textContent = ''; sendOk.textContent = '';
+  const pin = document.getElementById('pin').value.trim();
+  if (!/^\d{4}$/.test(pin)) { sendErr.textContent = 'Ingrese el PIN de 4 dígitos de la tablet.'; return; }
+  sendBtn.disabled = true;
+  try {
+    const res = await fetch('/api/pacientes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin, pacientes: items })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error');
+    sendOk.textContent = 'Enviadas ' + data.received + ' fichas. Ya puede confirmarlas en la tablet.';
+    items.length = 0; render();
+  } catch (e) {
+    sendErr.textContent = e.message || 'No se pudo enviar';
+  } finally {
+    sendBtn.disabled = items.length === 0;
+  }
+};
+</script>
+</body>
+</html>
