@@ -350,7 +350,7 @@ fun ReportScreen(
                             style = MaterialTheme.typography.bodyMedium,
                             color = Ink.copy(alpha = 0.5f),
                         )
-                        if (oemOk) {
+                        if (oemIndicators.any { !it.overlayPath.isNullOrBlank() }) {
                             Spacer(Modifier.height(8.dp))
                             Button(
                                 onClick = { tab = 4 },
