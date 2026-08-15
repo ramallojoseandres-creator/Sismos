@@ -91,7 +91,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeout
 import java.io.File
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -198,9 +197,11 @@ fun CaptureScreen(
         Log.i("Capture", usbSummary)
 
         try {
-            uvcLabel = "$usbSummary — preparando cámara…"
-            val session = withTimeout(8_000) { vm.prepareUvcSession(act) }
+            // Never await USB close here — it can hang forever on this tablet.
+            uvcLabel = "$usbSummary — abriendo sesión…"
+            val session = vm.prepareUvcSession(act)
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
+            delay(400) // brief settle while bg release runs; do not join it
             uvcLabel = "$usbSummary — creando vista…"
             withContext(Dispatchers.Main.immediate) {
                 session.bindPreview(view)

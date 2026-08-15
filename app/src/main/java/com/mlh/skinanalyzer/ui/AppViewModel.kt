@@ -132,50 +132,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         isCaptureScreenActive = active
     }
 
-    /** Release UVC synchronously — must finish before opening a new USB session. */
+    /** Release UVC without blocking the caller (USB close can hang forever). */
     fun releaseUvcSession() {
-        try {
-            uvcSession?.release()
-        } catch (e: Exception) {
-            Log.e("MLH", "releaseUvcSession", e)
-        } finally {
-            uvcSession = null
-        }
+        val previous = uvcSession ?: return
+        uvcSession = null
+        Thread({
+            try {
+                previous.release()
+            } catch (e: Exception) {
+                Log.e("MLH", "releaseUvcSession", e)
+            }
+        }, "mlh-uvc-release").apply { isDaemon = true; start() }
     }
 
     fun getUvcSession(): Mj008UvcSession? = uvcSession
 
     /**
-     * Hand off USB from any prior LED claim to UVC preview.
+     * Create a fresh UVC session without waiting on any USB I/O.
      *
-     * Do **not** open UART here: OEM drives MJ-008 lights via UVC `controlLed`
-     * after preview. Opening `/dev/ttyS1` can block forever and freeze Captura
-     * at “liberando USB…”.
+     * Closing a prior USB-XU / UVC handle can block forever on MJ-008 firmware.
+     * [withTimeout] cannot interrupt that, so Captura froze on “preparando…”.
+     * Release happens on daemon threads; we never join them.
      */
-    suspend fun prepareUvcSession(activity: android.app.Activity): Mj008UvcSession {
+    fun prepareUvcSession(activity: android.app.Activity): Mj008UvcSession {
         val previous = uvcSession
         uvcSession = null
-        withContext(Dispatchers.IO) {
-            if (previous != null) {
-                val done = kotlinx.coroutines.CompletableDeferred<Unit>()
-                Thread({
-                    try {
-                        previous.release()
-                    } catch (e: Exception) {
-                        Log.e("MLH", "previous UVC release", e)
-                    } finally {
-                        done.complete(Unit)
-                    }
-                }, "mlh-uvc-release").also { it.isDaemon = true }.start()
-                val finished = kotlinx.coroutines.withTimeoutOrNull(2_000) { done.await() }
-                if (finished == null) {
-                    Log.w("MLH", "UVC release timed out — continuing to open camera")
-                }
-            }
-            runCatching { lightController.releaseUsbForUvc() }
-                .onFailure { Log.w("MLH", "releaseUsbForUvc: ${it.message}") }
+        if (previous != null) {
+            Thread({
+                runCatching { previous.release() }
+                    .onFailure { Log.w("MLH", "bg UVC release: ${it.message}") }
+            }, "mlh-uvc-release").apply { isDaemon = true; start() }
         }
-        kotlinx.coroutines.delay(200)
+        Thread({
+            runCatching { lightController.releaseUsbForUvc() }
+                .onFailure { Log.w("MLH", "bg USB-XU release: ${it.message}") }
+        }, "mlh-xu-release").apply { isDaemon = true; start() }
         return Mj008UvcSession(activity).also { uvcSession = it }
     }
 
@@ -261,36 +252,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 mj008Detection = detection
                 lightController.setCameraVariant(detection.cameraVariant)
                 hardwareDiagnostics = detection.diagnostics
-                // USB-XU and UVC share one device — never keep LED USB open when analyzer cam present.
-                if (detection.usbXuCameraPresent) {
-                    lightController.releaseUsbForUvc()
-                }
-                val ok = if (detection.usbXuCameraPresent) {
-                    lightController.openSerialOnly()
-                } else {
-                    lightController.open()
-                }
-                hardwareStatus = if (ok) {
-                    buildString {
-                        append("MJ-008 listo · LED ${lightController.backendLabel}")
-                        append(" · cámara ${detection.cameraVariant.name}")
-                        if (detection.usbCameras.isNotEmpty()) {
-                            append(" · USB3.0 detectada")
-                            append(" · abra Captura y acepte permiso USB")
-                        } else {
-                            append(" · sin USB cámara")
-                        }
+                // Analyzer USB cam present: do NOT open USB-XU or UART here.
+                // Those open/close calls hang on MJ-008 and block Captura.
+                // Lights are driven via UVC controlLed after preview (OEM path).
+                if (detection.usbCameras.isNotEmpty() || detection.usbXuCameraPresent) {
+                    hardwareStatus = buildString {
+                        append("MJ-008: USB3.0 detectada")
+                        append(" · luces por cámara (UVC)")
+                        append(" · abra Captura")
                         append(" · sin nube")
                     }
+                    Log.i("MLH", "HW: skip LED open — analyzer cam present\n${detection.diagnostics}")
+                    return@launch
+                }
+                val ok = lightController.open()
+                hardwareStatus = if (ok) {
+                    "MJ-008 listo · LED ${lightController.backendLabel} · sin USB cámara · sin nube"
                 } else {
-                    buildString {
-                        append(detection.summary)
-                        append(" · ")
-                        append(lightController.lastError ?: "LED no conectado")
-                        if (detection.usbCameras.isNotEmpty()) {
-                            append(" · USB3.0 detectada — Captura + permiso USB")
-                        }
-                    }
+                    "${detection.summary} · ${lightController.lastError ?: "LED no conectado"}"
                 }
                 Log.i("MLH", "HW diagnostics:\n${detection.diagnostics}")
             }.onFailure {
