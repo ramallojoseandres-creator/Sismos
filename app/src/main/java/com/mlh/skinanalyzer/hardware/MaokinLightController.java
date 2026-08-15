@@ -4,15 +4,11 @@ import android.hardware.usb.UsbDeviceConnection;
 import android.util.Log;
 
 /**
- * Control de las 8 luces del analizador facial MJ-008 (cámara UVC 0edc:3080).
+ * Referencia del protocolo XU (canales, delays, payload).
  *
- * Protocolo extraído por ingeniería inversa del firmware/app original.
- * Mecanismo: escritura a Extension Unit (XU) UVC con dos control transfers
- * sobre la interfaz de VideoControl (interfaz 0).
- *
- * IMPORTANTE: usar la misma {@link UsbDeviceConnection} que ya abrió UVC
- * (claimInterface en esa conexión). Abrir luces en un segundo openDevice
- * mientras la cámara usa el USB cuelga el MJ-008.
+ * En runtime las luces se envían con {@code UVCCameraHandler.controlLed}
+ * sobre la misma sesión UVC (brief §2). No usar esta clase para abrir USB
+ * ni claimInterface — provocaría doble conexión.
  */
 public class MaokinLightController {
     private static final String TAG = "MaokinLight";

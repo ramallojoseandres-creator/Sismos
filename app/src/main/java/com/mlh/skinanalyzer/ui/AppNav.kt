@@ -26,6 +26,7 @@ import com.mlh.skinanalyzer.ui.screens.CaptureScreen
 import com.mlh.skinanalyzer.ui.screens.CompareScreen
 import com.mlh.skinanalyzer.ui.screens.DiagnosticScreen
 import com.mlh.skinanalyzer.ui.screens.HomeScreen
+import com.mlh.skinanalyzer.ui.screens.LightTestScreen
 import com.mlh.skinanalyzer.ui.screens.PatientFormScreen
 import com.mlh.skinanalyzer.ui.screens.PatientsScreen
 import com.mlh.skinanalyzer.ui.screens.ReportScreen
@@ -43,6 +44,7 @@ object Routes {
     const val COMPARE = "compare/{patientId}"
     const val SETTINGS = "settings"
     const val DIAGNOSTIC = "diagnostic"
+    const val LIGHT_TEST = "light_test"
 }
 
 @Composable
@@ -105,10 +107,14 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                 onToggleIndicator = { key, enabled -> vm.setIndicatorEnabled(key, enabled) },
                 onRefreshHardware = { vm.refreshHardware() },
                 onOpenDiagnostic = { nav.navigate(Routes.DIAGNOSTIC) },
+                onOpenLightTest = { nav.navigate(Routes.LIGHT_TEST) },
             )
         }
         composable(Routes.DIAGNOSTIC) {
             DiagnosticScreen(onBack = { nav.popBackStack() })
+        }
+        composable(Routes.LIGHT_TEST) {
+            LightTestScreen(vm = vm, onBack = { nav.popBackStack() })
         }
         composable(Routes.PATIENTS) {
             PatientsScreen(

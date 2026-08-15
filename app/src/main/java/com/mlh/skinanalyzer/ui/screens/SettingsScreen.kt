@@ -70,6 +70,7 @@ fun SettingsScreen(
     onToggleIndicator: (String, Boolean) -> Unit,
     onRefreshHardware: () -> Unit,
     onOpenDiagnostic: () -> Unit = {},
+    onOpenLightTest: () -> Unit = {},
 ) {
     var name by remember(clinic) { mutableStateOf(clinic.clinicName) }
     var doctor by remember(clinic) { mutableStateOf(clinic.doctorName) }
@@ -204,6 +205,18 @@ fun SettingsScreen(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(4.dp),
             ) { Text("Diagnóstico USB / cámara (copiar)") }
+            Button(
+                onClick = onOpenLightTest,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(4.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Accent),
+                enabled = !demoMode,
+            ) { Text("Prueba luces (etapa 3 · preview + 8 LEDs)") }
+            Text(
+                "No avance a captura/análisis hasta que el preview siga vivo al cambiar luces.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Ink.copy(alpha = 0.5f),
+            )
             if (hardwareDiagnostics.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Diagnóstico USB / serie", style = MaterialTheme.typography.titleLarge)
