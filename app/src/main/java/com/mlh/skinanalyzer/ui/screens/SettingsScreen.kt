@@ -168,9 +168,9 @@ fun SettingsScreen(
             HorizontalDivider(Modifier.padding(vertical = 8.dp))
             Text("Prueba sin tablet (Demo)", style = MaterialTheme.typography.titleLarge, color = Accent)
             Text(
-                "Active esto en el emulador de Android Studio o en un teléfono para recorrer " +
-                    "pacientes → captura → informe sin USB3.0 ni luces MJ-008. " +
-                    "En la tablet real, déjelo apagado.",
+                "Solo desde Ajustes — nunca se activa por fallo de USB. " +
+                    "Sirve para emulador/teléfono: pacientes → captura → informe sin MJ-008. " +
+                    "Los informes Demo llevan marca «NO CLÍNICO» y no sustituyen a Gushang.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),
             )

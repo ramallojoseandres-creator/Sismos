@@ -48,7 +48,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.ui.text.style.TextAlign
@@ -206,8 +205,8 @@ fun CaptureScreen(
             delay(8_000)
             if (!uvcReady) {
                 uvcGiveUp = true
-                uvcLabel = "$usbSummary — sin imagen en 8 s. Use Demo o Reintentar."
-                status = "La cámara USB no abrió a tiempo. Puede continuar en Demo sin instalar otra vez."
+                uvcLabel = "$usbSummary — sin imagen en 8 s. Reintentar USB."
+                status = "La cámara USB no abrió a tiempo. Reintente; el modo Demo solo está en Ajustes."
             }
         }
 
@@ -227,7 +226,7 @@ fun CaptureScreen(
             }
             if (!bound) {
                 uvcGiveUp = true
-                uvcLabel = "${session.statusLabel} — Demo o Reintentar."
+                uvcLabel = "${session.statusLabel} — Reintentar USB."
                 return@LaunchedEffect
             }
             uvcLabel = "$usbSummary — conectando USB3.0…"
@@ -246,7 +245,7 @@ fun CaptureScreen(
             }
             if (!session.isReady) {
                 uvcGiveUp = true
-                uvcLabel = "${session.statusLabel} — sin preview. Demo o Reintentar."
+                uvcLabel = "${session.statusLabel} — sin preview. Reintentar USB."
             }
         } catch (e: CancellationException) {
             throw e
@@ -257,7 +256,7 @@ fun CaptureScreen(
             uvcLabel = when {
                 detail.contains("0x7f0e0000") || detail.contains("Resource ID") ->
                     "Falta recurso cámara (click). Reinstale v${BuildConfig.VERSION_NAME}+"
-                else -> "Error UVC: $detail · use Demo o Reintentar"
+                else -> "Error UVC: $detail · Reintentar USB"
             }
         } finally {
             watchdog.cancel()
@@ -428,21 +427,11 @@ fun CaptureScreen(
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
                                 ) { Text("Reintentar cámara frontal USB3.0") }
-                                Spacer(Modifier.height(8.dp))
-                                OutlinedButton(
-                                    onClick = {
-                                        vm.enableDemoMode(true)
-                                        useUvc = false
-                                        uvcGiveUp = false
-                                        lightsOn = true
-                                        status = "Modo Demo: pulse Iniciar análisis (sin USB)."
-                                        uvcLabel = "Demo activo"
-                                    },
-                                ) { Text("Continuar en Demo ahora (sin USB)") }
                                 if (uvcGiveUp) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        "No espere más: en 8 s no hubo imagen. Demo prueba el flujo completo sin la tablet.",
+                                        "Sin USB no hay análisis clínico. El modo Demo solo se activa en Ajustes " +
+                                            "(no desde un fallo de cámara).",
                                         color = Paper.copy(alpha = 0.9f),
                                         style = MaterialTheme.typography.bodyMedium,
                                         textAlign = TextAlign.Center,

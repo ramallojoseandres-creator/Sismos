@@ -18,8 +18,6 @@ import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.FacialProportionAnalyzer
 import com.mlh.skinanalyzer.analysis.gushang.GushangLicense
 import com.mlh.skinanalyzer.analysis.gushang.GushangSkinEngine
-import com.mlh.skinanalyzer.analysis.oem.OemAnalysisBundle
-import com.mlh.skinanalyzer.analysis.oem.OemSkinEngine
 import com.mlh.skinanalyzer.analysis.ReportGenerator
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
 import com.mlh.skinanalyzer.analysis.SkinAnalyzer
@@ -381,7 +379,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         viewModelScope.launch {
             analyzing = true
-            val oemEngine = OemSkinEngine(getApplication())
             val gushangEngine = GushangSkinEngine(getApplication())
             try {
                 val patient = withContext(Dispatchers.IO) { patientsDao.getById(patientId) }
@@ -389,68 +386,65 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     userMessage = "No se encontró el paciente para analizar."
                     return@launch
                 }
-                // Brief §5: if license missing, stop before analysis.
+
                 refreshGushangStatus()
-                delayBrief()
-                if (!GushangLicense.isActivated && !demoMode) {
-                    userMessage = GushangLicense.lastMessage
-                    gushangLicenseStatus = GushangLicense.lastMessage
-                    gushangActivated = false
-                    // Still allow OEM libsalon / heuristic fallback so clinic is not blocked,
-                    // but surface the license warning.
-                    Log.w("MLH", "Gushang not activated — ${GushangLicense.lastMessage}")
+                withContext(Dispatchers.IO) {
+                    val app = getApplication<Application>()
+                    if (app is MlhApp) app.refreshGushangLicense()
+                    else GushangLicense.ensureRegistered(app)
                 }
+                gushangActivated = GushangLicense.isActivated
+                gushangLicenseStatus = GushangLicense.lastMessage
 
-                var oemBundle: OemAnalysisBundle? = null
-                var result: SkinAnalysisResult
+                val result: SkinAnalysisResult
                 val pathsOut: Map<String, String>
-                var engineLabel = "heurístico"
 
-                val gushangResult = if (GushangLicense.isActivated) {
-                    withContext(Dispatchers.Default) {
-                        gushangEngine.analyze(sessionDir, patient.age)
-                    }
-                } else {
-                    null
-                }
-
-                if (gushangResult != null) {
-                    result = filterMetrics(gushangResult)
-                    pathsOut = imagePaths
-                    engineLabel = "Gushang SkinDetect"
-                } else if (oemEngine.canAnalyze(sessionDir)) {
-                    oemBundle = withContext(Dispatchers.Default) {
-                        oemEngine.analyze(sessionDir, patient.age)
-                    }
-                    if (oemBundle != null) {
-                        result = filterMetrics(oemEngine.toSkinAnalysisResult(oemBundle, patient.age))
-                        pathsOut = imagePaths
-                        engineLabel = "OEM libsalon"
-                    } else {
+                when {
+                    // Explicit Demo (Settings only) — never as silent USB fallback.
+                    demoMode -> {
                         val bitmaps = loadHeuristicBitmaps(imagePaths)
+                        val demo = withContext(Dispatchers.Default) {
+                            SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
+                        }
                         result = filterMetrics(
-                            withContext(Dispatchers.Default) {
-                                SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
-                            },
+                            demo.copy(
+                                overview = "MODO DEMO — cifras simuladas, no medidas por el motor licenciado.\n" +
+                                    demo.overview,
+                                analysisEngine = SkinAnalysisResult.ENGINE_DEMO,
+                                isClinicalLicensed = false,
+                            ),
                         )
                         pathsOut = bitmaps.second
                     }
-                } else {
-                    val bitmaps = loadHeuristicBitmaps(imagePaths)
-                    result = filterMetrics(
-                        withContext(Dispatchers.Default) {
-                            SkinAnalyzer.analyze(bitmaps.first, patient.age, moisture)
-                        },
-                    )
-                    pathsOut = bitmaps.second
+                    !GushangLicense.isActivated -> {
+                        userMessage =
+                            "Licencia Gushang no activa. No se generará informe clínico. " +
+                                GushangLicense.lastMessage +
+                                " Active Demo solo desde Ajustes si desea simular."
+                        Log.e("MLH", "Analysis blocked — no license")
+                        return@launch
+                    }
+                    else -> {
+                        val gushangResult = withContext(Dispatchers.Default) {
+                            gushangEngine.analyze(sessionDir, patient.age)
+                        }
+                        if (gushangResult == null) {
+                            userMessage =
+                                "Motor Gushang no devolvió resultados. " +
+                                    "No se usará estimación propia para no inventar cifras clínicas. " +
+                                    "Revise capturas, landmarks y /sdcard/skindetect."
+                            Log.e("MLH", "Gushang analyze returned null — hard stop")
+                            return@launch
+                        }
+                        result = filterMetrics(gushangResult)
+                        pathsOut = imagePaths
+                    }
                 }
 
-                if (!GushangLicense.isActivated && !demoMode) {
-                    result = result.copy(
-                        overview = "⚠ ${GushangLicense.lastMessage}\n${result.overview}",
-                    )
-                }
-                Log.i("MLH", "Analysis engine=$engineLabel metrics=${result.metrics.size}")
+                Log.i(
+                    "MLH",
+                    "Analysis engine=${result.analysisEngine} clinical=${result.isClinicalLicensed}",
+                )
 
                 lastResult = result
                 val session = AnalysisSession(
@@ -465,13 +459,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         .take(3)
                         .joinToString("\n") { "• ${it.name}: ${it.recommendation}" },
                     moisturePercent = moisture,
-                    facialRatioJson = oemBundle?.facialRatioJson?.takeIf { it.isNotBlank() }
-                        ?: gson.toJson(
-                            result.facial ?: FacialProportionAnalyzer.analyze(
-                                decodeBitmap(imagePaths["White"] ?: imagePaths.values.firstOrNull().orEmpty()),
-                            ),
+                    facialRatioJson = gson.toJson(
+                        result.facial ?: FacialProportionAnalyzer.analyze(
+                            decodeBitmap(imagePaths["White"] ?: imagePaths.values.firstOrNull().orEmpty()),
                         ),
-                    oemIndicatorsJson = oemBundle?.let { gson.toJson(it.indicators) } ?: "",
+                    ),
+                    oemIndicatorsJson = "",
                     sessionDir = sessionDir,
                 )
                 val sid = withContext(Dispatchers.IO) { sessionsDao.insert(session) }
@@ -480,16 +473,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 Log.e("MLH", "runAnalysis failed", e)
                 userMessage = "Error al analizar: ${e.message ?: e.javaClass.simpleName}"
             } finally {
-                oemEngine.close()
                 gushangEngine.close()
                 analyzing = false
             }
         }
-    }
-
-    private suspend fun delayBrief() {
-        // Allow background register thread to finish if still running.
-        kotlinx.coroutines.delay(200)
     }
 
     private suspend fun loadHeuristicBitmaps(

@@ -309,16 +309,18 @@ fun ReportScreen(
             when (tab) {
                 0 -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
-                        val oemOk = oemIndicators.isNotEmpty()
                         Text(
-                            if (oemOk) {
-                                "Motor: análisis nativo OEM (libsalon + MediaPipe) · mapas faciales reales"
-                            } else {
-                                "Motor: heurístico de respaldo · sin mapas faciales OEM"
-                            },
+                            "Motor: ${r.analysisEngine}",
                             style = MaterialTheme.typography.bodyMedium,
-                            color = if (oemOk) Accent else Ink.copy(alpha = 0.55f),
+                            color = if (r.isClinicalLicensed) Accent else Color(0xFFB71C1C),
                         )
+                        if (!r.isClinicalLicensed) {
+                            Text(
+                                "Informe NO clínico — simulación / Demo. No usar cifras como medición real.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFFB71C1C),
+                            )
+                        }
                         Spacer(Modifier.height(6.dp))
                         Text("Tipo de piel: ${r.skinType}", style = MaterialTheme.typography.titleLarge)
                         Text("Edad cutánea: ${r.skinAge} años", style = MaterialTheme.typography.titleLarge, color = Accent)
@@ -332,7 +334,7 @@ fun ReportScreen(
                         Text(s.recommendations, style = MaterialTheme.typography.bodyMedium)
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            "100% local en esta tablet · sin servidores chinos (ai.aiskin.vip).",
+                            "Análisis cosmético offline. No sustituye diagnóstico dermatológico.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = Ink.copy(alpha = 0.5f),
                         )

@@ -30,6 +30,11 @@ class GushangSkinEngine(context: Context) {
     }
 
     fun analyze(sessionDir: String, patientAge: Int): SkinAnalysisResult? {
+        // Hard gate: never invent scores without a valid license.
+        if (!GushangLicense.isActivated) {
+            Log.e(TAG, "analyze blocked — license not activated")
+            return null
+        }
         if (!canAnalyze(sessionDir)) return null
         val lm = landmarks.extract(sessionDir) ?: return null
         val dir = File(sessionDir)
@@ -78,7 +83,7 @@ class GushangSkinEngine(context: Context) {
                     layer = layer,
                     score = s,
                     level = CareLevel.fromScore(s),
-                    description = "Indicador Gushang SkinDetect (offline).",
+                    description = "Indicador Gushang SkinDetect (offline, licenciado).",
                     causes = "Ver mapa / valor cuantitativo del motor licenciado.",
                     precautions = "Análisis cosmético; no es diagnóstico médico.",
                     recommendation = "Consulte el informe y el criterio clínico.",
@@ -86,7 +91,6 @@ class GushangSkinEngine(context: Context) {
                 Log.i(TAG, "$key=$score")
             }
 
-            // Superficie / sebo / poros / etc. — rutas de imagen OEM
             runFloat("sebum", "Sebo", "surface", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinOilContent)
             runFloat("moisture", "Hidratación", "surface", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinWaterContent)
             runFloat("tone", "Luminosidad", "surface", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinWhiteness)
@@ -111,9 +115,11 @@ class GushangSkinEngine(context: Context) {
                 overview = "Prioridades Gushang: " +
                     metrics.sortedByDescending { it.score }.take(3)
                         .joinToString { "${it.name} (${it.score.toInt()})" },
-                facialRatioNote = "Landmarks MediaPipe → SkinDetect.",
+                facialRatioNote = "Landmarks MediaPipe → SkinDetect licenciado.",
                 priorityKeys = priority,
                 facial = null,
+                analysisEngine = SkinAnalysisResult.ENGINE_GUSHANG,
+                isClinicalLicensed = true,
             )
         } catch (e: Exception) {
             Log.e(TAG, "Gushang analyze failed", e)

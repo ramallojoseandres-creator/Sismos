@@ -45,7 +45,19 @@ data class SkinAnalysisResult(
     val facialRatioNote: String,
     val priorityKeys: List<String>,
     val facial: FacialProportionAnalyzer.Result? = null,
-)
+    /**
+     * Provenance: [ENGINE_GUSHANG] = licensed clinical; [ENGINE_DEMO] = simulation.
+     * Never present heuristic/OEM fallback as clinical without this flag.
+     */
+    val analysisEngine: String = ENGINE_UNKNOWN,
+    val isClinicalLicensed: Boolean = false,
+) {
+    companion object {
+        const val ENGINE_GUSHANG = "Gushang SkinDetect (licenciado)"
+        const val ENGINE_DEMO = "Demo / simulación (no clínico)"
+        const val ENGINE_UNKNOWN = "Desconocido"
+    }
+}
 
 /**
  * Offline multi-spectral skin analysis.
@@ -171,6 +183,8 @@ object SkinAnalyzer {
             facialRatioNote = facial.note,
             priorityKeys = priority,
             facial = facial,
+            analysisEngine = SkinAnalysisResult.ENGINE_DEMO,
+            isClinicalLicensed = false,
         )
     }
 

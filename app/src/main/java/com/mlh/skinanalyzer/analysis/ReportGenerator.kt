@@ -32,7 +32,11 @@ object ReportGenerator {
         sb.appendLine(clinic.doctorName)
         sb.appendLine(clinic.clinicName)
         if (clinic.specialty.isNotBlank()) sb.appendLine(clinic.specialty)
-        sb.appendLine("Skin Analyzer Pro · 100% offline (sin servidor chino)")
+        sb.appendLine("Skin Analyzer Pro · 100% offline")
+        sb.appendLine("Motor: ${result.analysisEngine}")
+        if (!result.isClinicalLicensed) {
+            sb.appendLine("⚠ INFORME NO CLÍNICO — cifras de simulación / no medidas por SkinDetect")
+        }
         sb.appendLine("────────────────────────────────────────")
         sb.appendLine("Paciente: ${patient.name}")
         sb.appendLine("Sexo: ${patient.gender} · Edad: ${patient.age}")
@@ -130,6 +134,7 @@ object ReportGenerator {
                 page = doc.startPage(pageInfo)
                 canvas = page.canvas
                 y = 48f
+                drawDemoWatermark(canvas, pageWidth, pageHeight, result.isClinicalLicensed)
             }
         }
         fun drawWrapped(text: String, paint: Paint, x: Float = 40f, maxWidth: Float = pageWidth - 80f) {
@@ -155,6 +160,18 @@ object ReportGenerator {
         y += 20f
         drawWrapped(clinic.clinicName, body)
         drawWrapped("Skin Analyzer Pro — Informe offline", muted)
+        drawWrapped("Motor: ${result.analysisEngine}", muted)
+        drawDemoWatermark(canvas, pageWidth, pageHeight, result.isClinicalLicensed)
+        if (!result.isClinicalLicensed) {
+            drawWrapped(
+                "ADVERTENCIA: este PDF no proviene del motor Gushang licenciado. No usar como informe clínico.",
+                Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = Color.rgb(160, 40, 40)
+                    textSize = 10f
+                },
+            )
+            y += 4f
+        }
         y += 6f
         canvas.drawLine(40f, y, pageWidth - 40f, y, body)
         y += 20f
@@ -209,6 +226,24 @@ object ReportGenerator {
         FileOutputStream(file).use { doc.writeTo(it) }
         doc.close()
         return file
+    }
+
+    private fun drawDemoWatermark(
+        canvas: Canvas,
+        pageWidth: Int,
+        pageHeight: Int,
+        isClinicalLicensed: Boolean,
+    ) {
+        if (isClinicalLicensed) return
+        val stamp = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.argb(70, 180, 40, 40)
+            textSize = 42f
+            typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+        }
+        canvas.save()
+        canvas.rotate(-28f, pageWidth / 2f, pageHeight / 2f)
+        canvas.drawText("DEMO — NO CLÍNICO", 80f, pageHeight / 2f, stamp)
+        canvas.restore()
     }
 
     private fun Float.round1(): String = "%.1f".format(this)
