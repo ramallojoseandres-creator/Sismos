@@ -20,6 +20,7 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -68,6 +69,7 @@ fun SettingsScreen(
     onSaveClinic: (ClinicProfile) -> Unit,
     onToggleIndicator: (String, Boolean) -> Unit,
     onRefreshHardware: () -> Unit,
+    onOpenDiagnostic: () -> Unit = {},
 ) {
     var name by remember(clinic) { mutableStateOf(clinic.clinicName) }
     var doctor by remember(clinic) { mutableStateOf(clinic.doctorName) }
@@ -197,6 +199,11 @@ fun SettingsScreen(
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
                 enabled = !demoMode,
             ) { Text("Reconectar luces / USB") }
+            OutlinedButton(
+                onClick = onOpenDiagnostic,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(4.dp),
+            ) { Text("Diagnóstico USB / cámara (copiar)") }
             if (hardwareDiagnostics.isNotBlank()) {
                 Spacer(Modifier.height(8.dp))
                 Text("Diagnóstico USB / serie", style = MaterialTheme.typography.titleLarge)
