@@ -7,6 +7,7 @@ import android.content.ContextWrapper
 import android.content.pm.PackageManager
 import android.graphics.Bitmap
 import android.hardware.usb.UsbManager
+import android.os.SystemClock
 import android.util.Log
 import android.util.Size
 import android.view.ViewGroup
@@ -94,7 +95,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.yield
 import java.io.File
-import android.os.SystemClock
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.coroutines.cancellation.CancellationException
