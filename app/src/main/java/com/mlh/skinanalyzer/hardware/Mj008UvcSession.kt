@@ -67,13 +67,11 @@ class Mj008UvcSession(
 
     val statusLabel: String
         get() {
-            if (released.get()) return "UVC: liberada"
-            val d = openedDevice.get()
-            val name = d?.let { UsbXuLightController.describe(it) } ?: "analizador"
+            if (released.get()) return "Sesión cerrada"
             return when {
-                previewReady.get() && lightsOn -> "Cámara + luces ON · $name"
-                previewReady.get() -> "Cámara frontal · $name · encendiendo luces…"
-                cameraOpenFlag.get() -> "UVC abierta · iniciando preview…"
+                previewReady.get() && lightsOn -> "Listo para capturar"
+                previewReady.get() -> "Preparando luces…"
+                cameraOpenFlag.get() -> "Iniciando cámara…"
                 else -> lastStatus
             }
         }

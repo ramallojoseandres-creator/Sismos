@@ -68,7 +68,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
     var indicatorPrefs by mutableStateOf<List<IndicatorPref>>(emptyList())
         private set
-    var hardwareStatus by mutableStateOf("Comprobando MJ-008…")
+    var hardwareStatus by mutableStateOf("Comprobando equipo…")
         private set
     var hardwareDiagnostics by mutableStateOf("")
         private set
@@ -100,6 +100,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** Gushang SkinDetect license status (updated from Application + refresh). */
     var gushangLicenseStatus by mutableStateOf(GushangLicense.lastMessage)
+        private set
+    var gushangUserMessage by mutableStateOf(GushangLicense.userFacingMessage)
         private set
     var gushangNeedsRestart by mutableStateOf(GushangLicense.needsAppRestart)
         private set
@@ -251,6 +253,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             gushangActivated = ok
             gushangLicenseStatus = GushangLicense.lastMessage
+            gushangUserMessage = GushangLicense.userFacingMessage
             gushangNeedsRestart = GushangLicense.needsAppRestart
         }
     }
@@ -319,11 +322,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             return
         }
         if (demoMode) {
-            hardwareStatus = "Modo Demo activo · sin USB MJ-008 · apto emulador / teléfono"
+            hardwareStatus = "Modo de prueba activo"
             hardwareDiagnostics =
-                "Demo: la captura usa la cámara del teléfono/emulador o fotogramas sintéticos.\n" +
-                    "Las luces USB-XU y la cámara USB3.0 del analizador no se usan.\n" +
-                    "Desactive Demo en Ajustes cuando pruebe en la tablet MJ-008."
+                "Demo: captura simulada sin el analizador.\n" +
+                    "Desactive la simulación en Admin para la consulta real."
             return
         }
         viewModelScope.launch(Dispatchers.IO) {
@@ -334,9 +336,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 lightController.close()
                 val status = when {
                     detection.usbCameras.isNotEmpty() || detection.usbXuCameraPresent ->
-                        "MJ-008: USB3.0 detectada · luces vía UVC en Captura · sin nube"
+                        "Equipo conectado"
                     else ->
-                        "${detection.summary} · abra Captura (USB) o active Demo"
+                        "No se detecta el equipo. Revise la conexión."
                 }
                 Log.i("MLH", "HW diagnostics (no USB open):\n${detection.diagnostics}")
                 withContext(Dispatchers.Main) {
@@ -347,7 +349,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }.onFailure {
                 Log.e("MLH", "refreshHardware", it)
                 withContext(Dispatchers.Main) {
-                    hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
+                    hardwareStatus = "No se detecta el equipo. Revise la conexión."
                     hardwareDiagnostics = it.stackTraceToString().take(800)
                 }
             }
@@ -564,6 +566,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 }
                 gushangActivated = GushangLicense.isActivated
                 gushangLicenseStatus = GushangLicense.lastMessage
+                gushangUserMessage = GushangLicense.userFacingMessage
                 gushangNeedsRestart = GushangLicense.needsAppRestart
 
                 val result: SkinAnalysisResult
@@ -590,23 +593,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     }
                     !GushangLicense.isActivated -> {
                         userMessage =
-                            "Licencia Gushang no activa. No se generará informe clínico. " +
-                                GushangLicense.lastMessage +
-                                " Active Demo solo desde Ajustes si desea simular."
-                        Log.e("MLH", "Analysis blocked — no license")
+                            "El equipo necesita activarse. Abra Admin → Licencia. " +
+                                "Sin activación no se genera informe clínico."
+                        Log.e("MLH", "Analysis blocked — no license: ${GushangLicense.lastMessage}")
                         return@launch
                     }
                     else -> {
-                        analyzingPhase = "Analizando con SkinDetect (sebo, poros, pigmentación…)"
+                        analyzingPhase = "Analizando indicadores de piel…"
                         val ageAt = patient.currentAge()
                         val gushangResult = withContext(Dispatchers.Default) {
                             gushangEngine.analyze(sessionDir, ageAt)
                         }
                         if (gushangResult == null) {
                             userMessage =
-                                "Motor Gushang no devolvió resultados. " +
-                                    "No se usará estimación propia para no inventar cifras clínicas. " +
-                                    "Revise capturas, landmarks y /sdcard/skindetect."
+                                "No se obtuvieron resultados. Revise que las fotos estén " +
+                                    "bien orientadas y reintente la captura."
                             Log.e("MLH", "Gushang analyze returned null — hard stop")
                             return@launch
                         }

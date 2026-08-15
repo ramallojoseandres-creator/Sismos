@@ -19,7 +19,12 @@ import androidx.camera.core.ImageCaptureException
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.camera.view.PreviewView
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -37,6 +42,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -89,6 +95,7 @@ import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
 import com.mlh.skinanalyzer.ui.theme.Ink
 import com.mlh.skinanalyzer.ui.theme.Paper
+import com.mlh.skinanalyzer.ui.theme.Teal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
@@ -152,7 +159,7 @@ fun CaptureScreen(
     var uvcSession by remember { mutableStateOf<Mj008UvcSession?>(null) }
     var textureView by remember { mutableStateOf<UVCCameraTextureView?>(null) }
     var uvcStartToken by remember { mutableIntStateOf(0) }
-    var uvcLabel by remember { mutableStateOf(if (demoMode) "Modo Demo" else "Iniciando UVC…") }
+    var uvcLabel by remember { mutableStateOf(if (demoMode) "Modo de prueba" else "Preparando equipo…") }
     var uvcReady by remember { mutableStateOf(false) }
     var lightsOn by remember { mutableStateOf(false) }
     var uvcGiveUp by remember { mutableStateOf(false) }
@@ -172,9 +179,9 @@ fun CaptureScreen(
     var status by remember {
         mutableStateOf(
             if (demoMode) {
-                "Modo Demo: no hace falta la tablet. Pulse Iniciar para simular las 8 luces."
+                "Modo de prueba: pulse Iniciar para simular las 8 luces."
             } else {
-                "Coloque el mentón y cierre los ojos. La cámara USB se abre sola (el diálogo USB a menudo no aparece)."
+                "Coloque el mentón y cierre los ojos. El equipo se prepara solo."
             },
         )
     }
@@ -211,31 +218,31 @@ fun CaptureScreen(
             delay(8_000)
             if (!uvcReady) {
                 uvcGiveUp = true
-                uvcLabel = "$usbSummary — sin imagen en 8 s. Reintentar USB."
-                status = "La cámara USB no abrió a tiempo. Reintente; el modo Demo solo está en Ajustes."
+                uvcLabel = "No se detecta el equipo. Revise la conexión."
+                status = "No se detecta el equipo. Revise la conexión y reintente."
             }
         }
 
         try {
             // Never await USB close / handler locks on Main — ANR on MJ-008.
-            uvcLabel = "$usbSummary — abriendo sesión…"
+            uvcLabel = "Abriendo sesión…"
             yield()
             val session = withContext(Dispatchers.Default) {
                 vm.prepareUvcSession(act)
             }
             detection?.let { controller.setCameraVariant(it.cameraVariant) }
             delay(300) // settle while bg release runs; do not join it
-            uvcLabel = "$usbSummary — creando handler UVC…"
+            uvcLabel = "Preparando cámara…"
             yield()
             val bound = withContext(Dispatchers.Default) {
                 session.bindPreview(view)
             }
             if (!bound) {
                 uvcGiveUp = true
-                uvcLabel = "${session.statusLabel} — Reintentar USB."
+                uvcLabel = "No se detecta el equipo. Revise la conexión."
                 return@LaunchedEffect
             }
-            uvcLabel = "$usbSummary — conectando USB3.0…"
+            uvcLabel = "Conectando equipo…"
             yield()
             session.start() // register/probe posted to USB I/O thread
             uvcSession = session
@@ -251,19 +258,14 @@ fun CaptureScreen(
             }
             if (!session.isReady) {
                 uvcGiveUp = true
-                uvcLabel = "${session.statusLabel} — sin preview. Reintentar USB."
+                uvcLabel = "No se detecta el equipo. Revise la conexión."
             }
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             Log.e("Capture", "UVC prepare/bind/start failed", e)
             uvcGiveUp = true
-            val detail = e.message ?: e.javaClass.simpleName
-            uvcLabel = when {
-                detail.contains("0x7f0e0000") || detail.contains("Resource ID") ->
-                    "Falta recurso cámara (click). Reinstale v${BuildConfig.VERSION_NAME}+"
-                else -> "Error UVC: $detail · Reintentar USB"
-            }
+            uvcLabel = "No se detecta el equipo. Revise la conexión."
         } finally {
             watchdog.cancel()
         }
@@ -433,7 +435,7 @@ fun CaptureScreen(
                                 CircularProgressIndicator(color = Accent)
                                 Spacer(Modifier.height(12.dp))
                                 Text(
-                                    uvcLabel.ifBlank { "Conectando USB3.0…" },
+                                    uvcLabel.ifBlank { "Conectando equipo…" },
                                     color = Paper,
                                     style = MaterialTheme.typography.bodyLarge,
                                     textAlign = TextAlign.Center,
@@ -451,24 +453,17 @@ fun CaptureScreen(
                                         }
                                     },
                                     colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                                ) { Text("Reintentar cámara frontal USB3.0") }
+                                    shape = RoundedCornerShape(14.dp),
+                                ) { Text("Reintentar conexión") }
                                 if (uvcGiveUp) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        "Sin USB no hay análisis clínico. El modo Demo solo se activa en Ajustes " +
-                                            "(no desde un fallo de cámara).",
+                                        "Sin el equipo no hay análisis. La simulación solo se activa en Admin.",
                                         color = Paper.copy(alpha = 0.9f),
                                         style = MaterialTheme.typography.bodyMedium,
                                         textAlign = TextAlign.Center,
                                     )
                                 }
-                                Spacer(Modifier.height(8.dp))
-                                Text(
-                                    "Si no sale diálogo USB, es normal. v${BuildConfig.VERSION_NAME}",
-                                    color = Paper.copy(alpha = 0.75f),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    textAlign = TextAlign.Center,
-                                )
                             }
                         }
                     }
@@ -608,14 +603,13 @@ fun CaptureScreen(
             )
             Text(
                 when {
-                    demoMode && hasCamPermission -> "Demo · cámara del dispositivo (sin luces USB)"
-                    demoMode -> "Demo · fotogramas sintéticos (sin cámara / sin USB)"
-                    useUvc && uvcReady && lightsOn ->
-                        "Luces blancas encendidas · listo para iniciar · $uvcLabel"
-                    useUvc && uvcReady -> "Cámara lista · encendiendo luces… · $uvcLabel"
-                    useUvc -> uvcLabel.ifBlank { "Buscando USB3.0 frontal (vid 3804 / pid 12416)…" }
-                    controller.isOpen -> "MJ-008 LED: ${controller.backendLabel} (${detection?.cameraVariant?.name ?: "—"})"
-                    else -> "MJ-008 LED: esperando cámara del analizador"
+                    demoMode && hasCamPermission -> "Modo de prueba · cámara del dispositivo"
+                    demoMode -> "Modo de prueba · simulación"
+                    useUvc && uvcReady && lightsOn -> "Listo para capturar"
+                    useUvc && uvcReady -> "Preparando luces…"
+                    useUvc -> uvcLabel.ifBlank { "Buscando el equipo…" }
+                    controller.isOpen -> "Equipo conectado"
+                    else -> "Esperando el equipo"
                 },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),
@@ -702,7 +696,7 @@ fun CaptureScreen(
                                             val session = uvcSession!!
                                             if (!session.isCameraAlive()) {
                                                 status =
-                                                    "Cámara USB desconectada en ${mode.displayName}. Reintente."
+                                                    "Se perdió la conexión del equipo. Reintente."
                                                 captureBanner = ""
                                                 Log.e("Capture", "camera dead before ${mode.shortName}")
                                                 return@launch
@@ -718,7 +712,7 @@ fun CaptureScreen(
                                                 Log.e("Capture", "Timeout/null capturando ${mode.shortName}")
                                                 status =
                                                     "No se pudo capturar en modo ${mode.displayName}. " +
-                                                        "Verifique la conexión USB y reintente."
+                                                        "Revise la conexión del equipo y reintente."
                                                 captureBanner = ""
                                                 return@launch
                                             }
@@ -823,40 +817,60 @@ fun CaptureScreen(
                     )
                 }
             }
-            LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            val lightPulse = rememberInfiniteTransition(label = "lights")
+            val lightGlow by lightPulse.animateFloat(
+                initialValue = 0.55f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(900),
+                    repeatMode = RepeatMode.Reverse,
+                ),
+                label = "lightGlow",
+            )
+            LazyRow(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 items(LightMode.captureOrder) { mode ->
                     val shot = captured[mode.shortName]
+                    val active = capturing && LightMode.captureOrder.getOrNull(currentIndex) == mode
                     Column(
-                        Modifier
-                            .width(76.dp)
-                            .background(Cream, RoundedCornerShape(4.dp))
-                            .border(
-                                1.dp,
-                                if (shot != null) Accent else Ink.copy(alpha = 0.15f),
-                                RoundedCornerShape(4.dp),
-                            )
-                            .padding(4.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.width(56.dp),
                     ) {
-                        if (shot?.second != null) {
-                            Image(
-                                bitmap = shot.second!!.asImageBitmap(),
-                                contentDescription = mode.shortName,
-                                modifier = Modifier
-                                    .size(60.dp)
-                                    .background(Ink),
-                            )
-                        } else {
-                            Box(
-                                Modifier
-                                    .size(60.dp)
-                                    .background(Ink.copy(alpha = 0.08f)),
-                                contentAlignment = Alignment.Center,
-                            ) {
-                                Text(mode.shortName.take(3), style = MaterialTheme.typography.labelLarge)
+                        Box(
+                            Modifier
+                                .size(if (active) 44.dp else 36.dp)
+                                .background(
+                                    mode.uiColor().copy(
+                                        alpha = when {
+                                            active -> lightGlow
+                                            shot != null -> 1f
+                                            else -> 0.35f
+                                        },
+                                    ),
+                                    CircleShape,
+                                )
+                                .border(
+                                    width = if (active) 2.dp else 1.dp,
+                                    color = if (shot != null) Teal else Ink.copy(alpha = 0.2f),
+                                    shape = CircleShape,
+                                ),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            if (shot?.second != null) {
+                                Image(
+                                    bitmap = shot.second!!.asImageBitmap(),
+                                    contentDescription = mode.shortName,
+                                    modifier = Modifier
+                                        .size(28.dp)
+                                        .background(Ink, CircleShape),
+                                )
                             }
                         }
-                        Text(mode.displayName.take(8), style = MaterialTheme.typography.labelLarge)
+                        Spacer(Modifier.height(4.dp))
+                        Text(
+                            mode.shortName.take(5),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = Ink.copy(alpha = 0.6f),
+                        )
                     }
                 }
             }

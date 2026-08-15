@@ -134,7 +134,7 @@ fun HomeScreen(
             )
             Spacer(Modifier.height(8.dp))
             Text(
-                "MJ-008 · 100% offline · base de datos propia",
+                "Análisis de piel en consulta",
                 style = MaterialTheme.typography.bodyLarge,
                 color = Ink.copy(alpha = 0.7f),
                 textAlign = TextAlign.Center,
@@ -142,13 +142,13 @@ fun HomeScreen(
             if (demoMode) {
                 Spacer(Modifier.height(12.dp))
                 Text(
-                    "MODO DEMO activo — sin cámara USB ni luces MJ-008. Desactívelo en Ajustes para la consulta real.",
+                    "Modo de prueba activo. Desactívelo en Admin para la consulta real.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = Accent,
                     textAlign = TextAlign.Center,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Cream, RoundedCornerShape(4.dp))
+                        .background(Cream, RoundedCornerShape(10.dp))
                         .padding(12.dp),
                 )
             }
@@ -157,9 +157,9 @@ fun HomeScreen(
                 onClick = onPatients,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(54.dp),
+                    .height(56.dp),
                 colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                shape = RoundedCornerShape(4.dp),
+                shape = RoundedCornerShape(14.dp),
             ) {
                 Icon(Icons.Outlined.People, contentDescription = null)
                 Spacer(Modifier.width(10.dp))
@@ -167,7 +167,7 @@ fun HomeScreen(
             }
             Spacer(Modifier.height(8.dp))
             Text(
-                "El análisis se inicia desde el perfil del paciente (NUEVO ANÁLISIS).",
+                "El análisis se inicia desde el perfil del paciente.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),
                 textAlign = TextAlign.Center,
@@ -175,7 +175,7 @@ fun HomeScreen(
             Spacer(Modifier.height(20.dp))
             if (recentSessions.isNotEmpty()) {
                 Text(
-                    "Últimos análisis (local)",
+                    "Últimos análisis",
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.fillMaxWidth(),
                 )
@@ -214,16 +214,8 @@ fun HomeScreen(
                     modifier = Modifier.weight(1f),
                 )
                 IconButton(onClick = onRefreshHardware) {
-                    Icon(Icons.Outlined.Refresh, contentDescription = "Reintentar MJ-008")
+                    Icon(Icons.Outlined.Refresh, contentDescription = "Reconectar equipo")
                 }
-            }
-            Spacer(Modifier.height(12.dp))
-            if (appVersion.isNotBlank()) {
-                Text(
-                    "v$appVersion · offline",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = Ink.copy(alpha = 0.4f),
-                )
             }
             Spacer(Modifier.height(16.dp))
         }

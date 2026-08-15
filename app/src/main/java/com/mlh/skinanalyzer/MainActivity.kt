@@ -48,7 +48,7 @@ class MainActivity : ComponentActivity() {
         Log.i("MLH", "runtime permissions: $result · skindetect=${GushangLicense.skindetectReadable()}")
         refreshStorageGate()
         if (needsAllFilesAccess) {
-            showManageStorageDialog = true
+            // Deferred to Admin; keep soft dialog optional only after explicit request.
         } else {
             reregisterLicense()
         }
@@ -87,49 +87,22 @@ class MainActivity : ComponentActivity() {
                     color = Paper,
                 ) {
                     Column(Modifier.fillMaxSize()) {
-                        if (needsAllFilesAccess) {
-                            Column(
-                                Modifier
-                                    .fillMaxWidth()
-                                    .background(Color(0xFFB71C1C))
-                                    .padding(12.dp),
-                            ) {
-                                Text(
-                                    "Falta «Acceso a todos los archivos» — sin esto no se lee " +
-                                        "/sdcard/skindetect y la licencia Gushang no activa.",
-                                    color = Color.White,
-                                )
-                                Text(
-                                    "Ajustes → Apps → MLH Skin → Acceso a todos los archivos → Activar",
-                                    color = Color.White.copy(alpha = 0.9f),
-                                    modifier = Modifier.padding(top = 4.dp),
-                                )
-                                Button(
-                                    onClick = { openManageAllFilesSettings() },
-                                    modifier = Modifier.padding(top = 8.dp),
-                                    colors = ButtonDefaults.buttonColors(containerColor = Accent),
-                                ) { Text("Abrir ajustes ahora") }
-                            }
-                        }
                         AppNav()
                     }
+                    // Permiso all-files: se solicita desde Admin → Licencia, no en consulta.
                     if (showManageStorageDialog) {
                         AlertDialog(
-                            onDismissRequest = { /* no cerrar sin decidir */ },
-                            title = { Text("Permiso obligatorio para la licencia") },
+                            onDismissRequest = { showManageStorageDialog = false },
+                            title = { Text("Acceso a archivos") },
                             text = {
                                 Text(
-                                    "En Android 11 no basta con declarar el permiso: hay que " +
-                                        "activarlo a mano una vez.\n\n" +
-                                        "Ruta: Ajustes → Apps → MLH Skin Analyzer → " +
-                                        "Acceso a todos los archivos → Activar.\n\n" +
-                                        "Sirve solo para leer la licencia en /sdcard/skindetect. " +
-                                        "Nada se sube a internet.",
+                                    "Para activar el equipo hace falta permitir el acceso a archivos " +
+                                        "una sola vez. Pulse Continuar.",
                                 )
                             },
                             confirmButton = {
                                 TextButton(onClick = { openManageAllFilesSettings() }) {
-                                    Text("Ir a Ajustes")
+                                    Text("Continuar")
                                 }
                             },
                             dismissButton = {
@@ -191,7 +164,8 @@ class MainActivity : ComponentActivity() {
         if (needed.isNotEmpty()) {
             runtimePermissions.launch(needed.toTypedArray())
         } else if (needsAllFilesAccess) {
-            showManageStorageDialog = true
+            // Do not interrupt clinical UI — Admin → Licencia offers the button.
+            Log.i("MLH", "all-files access still needed; prompt deferred to Admin")
         } else {
             reregisterLicense()
         }

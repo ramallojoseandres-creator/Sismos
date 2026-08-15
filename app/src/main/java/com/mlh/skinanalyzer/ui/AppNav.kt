@@ -1,18 +1,25 @@
 package com.mlh.skinanalyzer.ui
 
+import android.app.Activity
 import android.util.Log
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -21,20 +28,27 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import androidx.navigation.navOptions
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.security.PinStore
+import com.mlh.skinanalyzer.ui.screens.AdminScreen
 import com.mlh.skinanalyzer.ui.screens.CaptureScreen
 import com.mlh.skinanalyzer.ui.screens.CompareScreen
+import com.mlh.skinanalyzer.ui.screens.ConfigScreen
 import com.mlh.skinanalyzer.ui.screens.DiagnosticScreen
 import com.mlh.skinanalyzer.ui.screens.HomeScreen
 import com.mlh.skinanalyzer.ui.screens.LightTestScreen
 import com.mlh.skinanalyzer.ui.screens.PatientFormScreen
 import com.mlh.skinanalyzer.ui.screens.PatientsScreen
+import com.mlh.skinanalyzer.ui.screens.PinLockScreen
 import com.mlh.skinanalyzer.ui.screens.ReportScreen
 import com.mlh.skinanalyzer.ui.screens.SessionListScreen
-import com.mlh.skinanalyzer.ui.screens.SettingsScreen
+import com.mlh.skinanalyzer.ui.screens.SettingsHubScreen
 import com.mlh.skinanalyzer.ui.screens.WelcomeScreen
 import com.mlh.skinanalyzer.ui.screens.WifiImportScreen
+import com.mlh.skinanalyzer.ui.screens.openManageAllFilesIntent
+import kotlinx.coroutines.launch
 
 object Routes {
+    const val PIN = "pin"
     const val WELCOME = "welcome"
     const val HOME = "home"
     const val PATIENTS = "patients"
@@ -45,6 +59,8 @@ object Routes {
     const val SESSIONS = "sessions/{patientId}"
     const val COMPARE = "compare/{patientId}"
     const val SETTINGS = "settings"
+    const val CONFIG = "config"
+    const val ADMIN = "admin"
     const val DIAGNOSTIC = "diagnostic"
     const val LIGHT_TEST = "light_test"
 }
@@ -53,6 +69,35 @@ object Routes {
 fun AppNav(vm: AppViewModel = viewModel()) {
     val nav = rememberNavController()
     val snackbar = remember { SnackbarHostState() }
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val lifecycleOwner = LocalLifecycleOwner.current
+    var unlocked by remember { mutableStateOf(false) }
+    var pinChecked by remember { mutableStateOf(false) }
+
+    LaunchedEffect(Unit) {
+        unlocked = PinStore.isSessionValid(context)
+        pinChecked = true
+    }
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_START) {
+                scope.launch {
+                    val valid = PinStore.isSessionValid(context)
+                    if (!valid && unlocked) {
+                        unlocked = false
+                        nav.navigate(Routes.PIN) {
+                            popUpTo(0) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    }
+                }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(vm.userMessage) {
         vm.userMessage?.let { msg ->
@@ -61,14 +106,28 @@ fun AppNav(vm: AppViewModel = viewModel()) {
         }
     }
 
+    if (!pinChecked) return
+
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar, modifier = Modifier.padding(8.dp)) },
     ) { padding ->
         NavHost(
             navController = nav,
-            startDestination = Routes.WELCOME,
+            startDestination = if (unlocked) Routes.WELCOME else Routes.PIN,
             modifier = Modifier.padding(padding),
         ) {
+            composable(Routes.PIN) {
+                PinLockScreen(
+                    clinicName = vm.clinic.doctorName,
+                    onUnlocked = {
+                        unlocked = true
+                        nav.navigate(Routes.WELCOME) {
+                            popUpTo(Routes.PIN) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
+                )
+            }
             composable(Routes.WELCOME) {
                 WelcomeScreen(
                     clinicName = vm.clinic.doctorName,
@@ -92,27 +151,45 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                     onRefreshHardware = { vm.refreshHardware() },
                     demoMode = vm.demoMode,
                     patientNameFor = { id -> vm.findPatientById(id)?.displayName },
-                    appVersion = "${com.mlh.skinanalyzer.BuildConfig.VERSION_NAME} (${com.mlh.skinanalyzer.BuildConfig.VERSION_CODE})",
                 )
             }
             composable(Routes.SETTINGS) {
-                SettingsScreen(
+                SettingsHubScreen(
+                    onBack = { nav.popBackStack() },
+                    onConfig = { nav.navigate(Routes.CONFIG) },
+                    onAdmin = { nav.navigate(Routes.ADMIN) },
+                )
+            }
+            composable(Routes.CONFIG) {
+                ConfigScreen(
                     clinic = vm.clinic,
                     indicators = vm.indicatorPrefs,
+                    onBack = { nav.popBackStack() },
+                    onSaveClinic = { vm.saveClinic(it) },
+                    onToggleIndicator = { key, enabled -> vm.setIndicatorEnabled(key, enabled) },
+                )
+            }
+            composable(Routes.ADMIN) {
+                AdminScreen(
                     hardwareStatus = vm.hardwareStatus,
                     hardwareDiagnostics = vm.hardwareDiagnostics,
                     demoMode = vm.demoMode,
                     onDemoModeChange = { vm.enableDemoMode(it) },
                     appVersion = "${com.mlh.skinanalyzer.BuildConfig.VERSION_NAME} (${com.mlh.skinanalyzer.BuildConfig.VERSION_CODE})",
+                    gushangLicenseStatus = vm.gushangLicenseStatus,
+                    gushangUserMessage = vm.gushangUserMessage,
+                    gushangNeedsRestart = vm.gushangNeedsRestart,
+                    gushangActivated = vm.gushangActivated,
                     onBack = { nav.popBackStack() },
-                    onSaveClinic = { vm.saveClinic(it) },
-                    onToggleIndicator = { key, enabled -> vm.setIndicatorEnabled(key, enabled) },
                     onRefreshHardware = { vm.refreshHardware() },
                     onOpenDiagnostic = { nav.navigate(Routes.DIAGNOSTIC) },
                     onOpenLightTest = { nav.navigate(Routes.LIGHT_TEST) },
-                    gushangLicenseStatus = vm.gushangLicenseStatus,
-                    gushangNeedsRestart = vm.gushangNeedsRestart,
                     onRefreshGushang = { vm.refreshGushangStatus() },
+                    onOpenManageAllFiles = {
+                        val act = context as? Activity
+                        act?.startActivity(openManageAllFilesIntent(context.packageName))
+                    },
+                    onImportLicenceResult = { vm.showUserMessage(it) },
                 )
             }
             composable(Routes.DIAGNOSTIC) {

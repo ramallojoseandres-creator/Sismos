@@ -30,6 +30,17 @@ enum class LightMode(
     ORANGE(7, "Luz naranja", "Orange", 1013, UsbXuLightController.CMD_ORANGE, null),
     RED(8, "Luz roja", "Red", 1014, UsbXuLightController.CMD_RED, null);
 
+    fun uiColor(): androidx.compose.ui.graphics.Color = when (this) {
+        WHITE -> com.mlh.skinanalyzer.ui.theme.LightColors.White
+        XPL -> com.mlh.skinanalyzer.ui.theme.LightColors.Xpl
+        PPL -> com.mlh.skinanalyzer.ui.theme.LightColors.Ppl
+        WOODS -> com.mlh.skinanalyzer.ui.theme.LightColors.Woods
+        UV -> com.mlh.skinanalyzer.ui.theme.LightColors.Uv
+        BLUE -> com.mlh.skinanalyzer.ui.theme.LightColors.Blue
+        ORANGE -> com.mlh.skinanalyzer.ui.theme.LightColors.Orange
+        RED -> com.mlh.skinanalyzer.ui.theme.LightColors.Red
+    }
+
     companion object {
         val captureOrder = listOf(WHITE, XPL, PPL, WOODS, UV, BLUE, ORANGE, RED)
         val hardwareOrder = captureOrder
