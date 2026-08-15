@@ -135,6 +135,9 @@ private fun buildDiagnosticReport(context: Context): String {
     sb.appendLine("device=${Build.DEVICE}")
     sb.appendLine("hardware=${Build.HARDWARE}")
     sb.appendLine("sdk=${Build.VERSION.SDK_INT} release=${Build.VERSION.RELEASE}")
+    sb.appendLine("cpuAbi=${Build.CPU_ABI} cpuAbi2=${Build.CPU_ABI2}")
+    sb.appendLine("supportedAbis=${Build.SUPPORTED_ABIS.joinToString()}")
+    sb.appendLine("apkAbis=arm64-v8a,armeabi-v7a (UVC jniLibs)")
     sb.appendLine()
 
     val usb = context.getSystemService(Context.USB_SERVICE) as? UsbManager

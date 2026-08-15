@@ -376,13 +376,11 @@ class Mj008UvcSession(
         try {
             lastStatus = "UVC: open() nativo ${UsbXuLightController.describe(device)}…"
             // Never handler.close() here — stopPreview waits forever on stalled USB.
+            // Orden OEM: primero cámara (open + preview), luces solo después.
             handler.open(ctrlBlock)
             cameraOpenFlag.set(true)
             openedDevice.set(device)
             ctrlBlockRef.set(ctrlBlock)
-            // Luces sobre LA MISMA conexión USB que UVC (MaokinLightController).
-            // Un segundo openDevice/claim cuelga el MJ-008.
-            bindMaokinLights(ctrlBlock)
 
             fun startSurface() {
                 if (!started.get() || released.get()) return
@@ -393,9 +391,20 @@ class Mj008UvcSession(
                 h.startPreview(previewSurface)
                 previewReady.set(true)
                 opening.set(false)
+                // Luces DESPUÉS de preview, misma UsbDeviceConnection (nunca openDevice 2º).
+                bindMaokinLights(ctrlBlock)
                 lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
                 Log.i(TAG, lastStatus)
                 completeReady(true)
+                usbIo.postDelayed({
+                    if (started.get() && !released.get() && previewReady.get()) {
+                        runCatching { applyLightMode(LightMode.WHITE) }
+                        lightsOn = true
+                        lastStatus =
+                            "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
+                        Log.i(TAG, lastStatus)
+                    }
+                }, LightMode.WHITE_LIGHT_DELAY_MS)
             }
 
             mainHandler.post {
@@ -410,21 +419,11 @@ class Mj008UvcSession(
                         usbIo.post { startSurface() }
                     }, 800)
                 }
-                mainHandler.postDelayed({
-                    if (started.get() && !released.get() && previewReady.get()) {
-                        usbIo.post {
-                            runCatching { applyLightMode(LightMode.WHITE) }
-                            lightsOn = true
-                            lastStatus =
-                                "UVC + luces blancas ON · ${UsbXuLightController.describe(device)}"
-                            Log.i(TAG, lastStatus)
-                        }
-                    }
-                }, LightMode.WHITE_LIGHT_DELAY_MS)
             }
         } catch (e: Exception) {
             opening.set(false)
             cameraOpenFlag.set(false)
+            maokinLights.set(null)
             lastStatus = "UVC error: ${e.message}"
             Log.e(TAG, "UVC connect failed", e)
             completeReady(false)
@@ -499,8 +498,9 @@ class Mj008UvcSession(
      */
     fun applyLightMode(mode: LightMode) {
         val cmd = mode.usbCmd ?: return
-        if (!cameraOpenFlag.get() || released.get()) {
-            Log.w(TAG, "applyLightMode skipped — camera not open")
+        // Never before previewReady (onConnect → open → startPreview).
+        if (!previewReady.get() || released.get()) {
+            Log.w(TAG, "applyLightMode skipped — preview not ready")
             return
         }
         val lights = maokinLights.get()
@@ -533,7 +533,7 @@ class Mj008UvcSession(
     }
 
     fun turnOff() {
-        if (!cameraOpenFlag.get() || released.get()) return
+        if (!previewReady.get() || released.get()) return
         usbIo.post {
             val lights = maokinLights.get()
             if (lights != null) {

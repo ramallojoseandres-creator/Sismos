@@ -12,11 +12,12 @@ android {
         applicationId = "com.mlh.skinanalyzer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 22
-        versionName = "1.2.9"
+        versionCode = 23
+        versionName = "1.3.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            // OEM MJ-008 ships both; tablet may be 32-bit primary ABI.
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
     }
 

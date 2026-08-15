@@ -4,13 +4,15 @@ import android.content.Context
 import android.util.Log
 
 /**
- * Prefers the real MJ-008 USB-XU LED path (Miaojing OEM). Falls back to UART
- * `/dev/ttyS4` only when no USB camera is available (lab / emulator).
+ * Respaldo **solo UART** para lab/emulador sin cámara USB.
+ *
+ * En la tablet MJ-008 las luces van por [MaokinLightController] dentro de
+ * [Mj008UvcSession] (misma UsbDeviceConnection que UVC). Este controlador
+ * **nunca** abre USB.
  */
 class Mj008LightController(
-    context: Context,
+    @Suppress("UNUSED_PARAMETER") context: Context,
 ) : LightController {
-    private val usb = UsbXuLightController(context)
     private val serial = SerialLightController()
     private var active: LightController? = null
 
@@ -22,7 +24,7 @@ class Mj008LightController(
         get() = active?.backendLabel ?: "none"
 
     val usingUsb: Boolean
-        get() = active === usb
+        get() = false
     val usingSerial: Boolean
         get() = active === serial
 
@@ -30,50 +32,34 @@ class Mj008LightController(
         serial.setCameraVariant(variant)
     }
 
+    /**
+     * Solo UART de laboratorio. No toca USB (evita pelear con USBMonitor).
+     */
     override fun open(): Boolean {
         close()
-        if (usb.open()) {
-            active = usb
-            lastError = null
-            Log.i(TAG, "Using USB-XU LED backend")
-            return true
-        }
-        val usbErr = usb.lastError
-        if (serial.open()) {
+        return if (serial.open()) {
             active = serial
-            lastError = "USB-XU no disponible ($usbErr); usando UART de respaldo"
-            Log.w(TAG, lastError!!)
-            return true
+            lastError = null
+            Log.i(TAG, "Using UART LED backend (lab only — no USB)")
+            true
+        } else {
+            lastError = serial.lastError ?: "UART no disponible"
+            active = null
+            false
         }
-        lastError = listOfNotNull(usbErr, serial.lastError).joinToString(" · ")
-        active = null
-        return false
     }
 
     override fun close() {
-        runCatching { usb.close() }
         runCatching { serial.close() }
         active = null
     }
 
-    /** USB-XU and UVC cannot hold the same device — release before [Mj008UvcSession]. */
+    /** No-op: ya no hay handle USB-XU que soltar. */
     fun releaseUsbForUvc() {
-        runCatching { usb.releaseForUvcHandoff() }
-        if (active === usb) active = null
+        // USB lights live only inside Mj008UvcSession / MaokinLightController.
     }
 
-    /** LED via UART while UVC owns USB (MJ-008 ttyS1 @ 9600). */
-    fun openSerialOnly(): Boolean {
-        releaseUsbForUvc()
-        return if (serial.open()) {
-            active = serial
-            lastError = null
-            true
-        } else {
-            lastError = serial.lastError
-            false
-        }
-    }
+    fun openSerialOnly(): Boolean = open()
 
     override fun turnOff() {
         active?.turnOff()
@@ -86,12 +72,11 @@ class Mj008LightController(
     override fun applyLightMode(mode: LightMode) {
         val ctrl = active
         if (ctrl == null) {
-            lastError = "LED no conectado"
+            lastError = "LED UART no conectado (en MJ-008 use Captura UVC)"
             return
         }
-        // Serial Moji boards only drive W/N/P/WS/UV; skip spectral-only modes there.
-        if (ctrl === serial && mode.usbCmd != null && mode.hardwareChannel == null) {
-            Log.w(TAG, "Modo ${mode.shortName} requiere USB-XU; omitido en UART")
+        if (mode.usbCmd != null && mode.hardwareChannel == null) {
+            Log.w(TAG, "Modo ${mode.shortName} requiere Maokin/UVC; omitido en UART")
             return
         }
         ctrl.applyLightMode(mode)

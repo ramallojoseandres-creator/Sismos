@@ -163,13 +163,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     .onFailure { Log.w("MLH", "bg UVC release: ${it.message}") }
             }, "mlh-uvc-release").apply { isDaemon = true; start() }
         }
-        // Drop any separate USB-XU handle — luces irán por MaokinLight en la
-        // misma conexión UVC. Un segundo openDevice cuelga el MJ-008.
+        // No USB-XU path left to release; UART closed if any.
         Thread({
-            runCatching { lightController.releaseUsbForUvc() }
-                .onFailure { Log.w("MLH", "bg USB-XU release: ${it.message}") }
             runCatching { lightController.close() }
-        }, "mlh-xu-release").apply { isDaemon = true; start() }
+                .onFailure { Log.w("MLH", "bg light close: ${it.message}") }
+        }, "mlh-light-close").apply { isDaemon = true; start() }
         return Mj008UvcSession(activity).also { uvcSession = it }
     }
 
@@ -255,26 +253,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 mj008Detection = detection
                 lightController.setCameraVariant(detection.cameraVariant)
                 hardwareDiagnostics = detection.diagnostics
-                // Analyzer USB cam present: do NOT open USB-XU or UART here.
-                // Those open/close calls hang on MJ-008 and block Captura.
-                // Lights are driven via UVC controlLed after preview (OEM path).
-                if (detection.usbCameras.isNotEmpty() || detection.usbXuCameraPresent) {
-                    hardwareStatus = buildString {
-                        append("MJ-008: USB3.0 detectada")
-                        append(" · luces por cámara (UVC)")
-                        append(" · abra Captura")
-                        append(" · sin nube")
-                    }
-                    Log.i("MLH", "HW: skip LED open — analyzer cam present\n${detection.diagnostics}")
-                    return@launch
+                // NEVER open USB here — only USBMonitor in Captura owns the device.
+                // Opening USB-XU / claimInterface before UVC hangs MJ-008.
+                lightController.close() // ensure no leftover UART from lab
+                hardwareStatus = when {
+                    detection.usbCameras.isNotEmpty() || detection.usbXuCameraPresent ->
+                        "MJ-008: USB3.0 detectada · luces vía UVC en Captura · sin nube"
+                    else ->
+                        "${detection.summary} · abra Captura (USB) o active Demo"
                 }
-                val ok = lightController.open()
-                hardwareStatus = if (ok) {
-                    "MJ-008 listo · LED ${lightController.backendLabel} · sin USB cámara · sin nube"
-                } else {
-                    "${detection.summary} · ${lightController.lastError ?: "LED no conectado"}"
-                }
-                Log.i("MLH", "HW diagnostics:\n${detection.diagnostics}")
+                Log.i("MLH", "HW diagnostics (no USB open):\n${detection.diagnostics}")
             }.onFailure {
                 Log.e("MLH", "refreshHardware", it)
                 hardwareStatus = "MJ-008: hardware no disponible (${it.message})"
