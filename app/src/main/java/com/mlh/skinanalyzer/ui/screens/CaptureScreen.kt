@@ -271,9 +271,12 @@ fun CaptureScreen(
         while (true) {
             val session = uvcSession
             if (session != null) {
-                uvcLabel = session.statusLabel
+                if (!uvcGiveUp || session.isReady) {
+                    uvcLabel = session.statusLabel
+                }
                 val readyNow = session.isReady
                 uvcReady = readyNow
+                if (readyNow) uvcGiveUp = false
                 lightsOn = session.lightsOn
                 if (readyNow && !lit) {
                     lit = true
