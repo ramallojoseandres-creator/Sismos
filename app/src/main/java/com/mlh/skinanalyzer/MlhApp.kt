@@ -27,8 +27,8 @@ class MlhApp : Application() {
             Log.e("MLH", "DB init failed", e)
             throw e
         }
-        // Drop stale 270° calibration from 1.7.4 so capture stays at 90°.
-        com.mlh.skinanalyzer.hardware.CapturePrefs.clearRotationCalibration(this)
+        // Orientation is calibrated once (MediaPipe) and kept across launches.
+        // Admin → "Recalibrar orientación" clears it when needed.
         thread(name = "gushang-register", isDaemon = true) {
             refreshGushangLicense()
         }

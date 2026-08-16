@@ -8,7 +8,7 @@ import android.util.Log
 
 /**
  * Preferencias de captura. Rotación en píxeles (no EXIF).
- * Default 90° (misma orientación que el preview en pantalla); se calibra una vez con MediaPipe.
+ * Default 90°; se calibra una vez con MediaPipe y se guarda.
  */
 object CapturePrefs {
     private const val TAG = "CapturePrefs"
@@ -20,7 +20,6 @@ object CapturePrefs {
     private const val KEY_SETTLE_AFTER = "capture_settle_after_ms"
     private const val KEY_PRE_FIRST = "capture_pre_first_ms"
 
-    /** Mejor apuesta: coincide con la orientación del preview en pantalla. */
     const val DEFAULT_ROTATION_DEG = 90
     const val MIRROR_HORIZONTAL = false
 
@@ -32,8 +31,8 @@ object CapturePrefs {
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Ángulo para JPEG: siempre 90° (preview + archivo). Ignora prefs viejas (270). */
-    fun captureRotationDeg(@Suppress("UNUSED_PARAMETER") ctx: Context): Int = DEFAULT_ROTATION_DEG
+    fun captureRotationDeg(ctx: Context): Int =
+        prefs(ctx).getInt(KEY_ROTATION, DEFAULT_ROTATION_DEG)
 
     fun isRotationCalibrated(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_ROTATION_SET, false)
@@ -48,12 +47,12 @@ object CapturePrefs {
         Log.i(TAG, "Rotación guardada: $value")
     }
 
-    /** Limpia calibración errónea (p.ej. 270°) de builds anteriores. */
     fun clearRotationCalibration(ctx: Context) {
         prefs(ctx).edit()
             .remove(KEY_ROTATION)
             .remove(KEY_ROTATION_SET)
             .apply()
+        Log.i(TAG, "Calibración de orientación borrada")
     }
 
     fun settleFirstMs(ctx: Context): Long = prefs(ctx).getLong(KEY_SETTLE_FIRST, DEFAULT_SETTLE_FIRST_MS)
@@ -86,13 +85,13 @@ object CapturePrefs {
     }
 
     /**
-     * Rota el bitmap en píxeles. Siempre crea bitmap nuevo si hay giro.
+     * Rota el bitmap en píxeles. Siempre crea bitmap nuevo.
      * NO usar EXIF — el .so lo ignora.
      */
     fun transformBitmap(src: Bitmap, rotationDeg: Int, mirrorH: Boolean = MIRROR_HORIZONTAL): Bitmap {
         val deg = ((rotationDeg % 360) + 360) % 360
         if (deg == 0 && !mirrorH) {
-            return src.copy(src.config ?: Bitmap.Config.ARGB_8888, false)
+            return src.copy(Bitmap.Config.ARGB_8888, false)
         }
         val m = Matrix()
         if (deg != 0) m.postRotate(deg.toFloat())
@@ -102,7 +101,6 @@ object CapturePrefs {
         return out
     }
 
-    // Compat aliases used elsewhere
     fun rotationDeg(ctx: Context): Int = captureRotationDeg(ctx)
     fun mirrorHorizontal(@Suppress("UNUSED_PARAMETER") ctx: Context): Boolean = MIRROR_HORIZONTAL
 }

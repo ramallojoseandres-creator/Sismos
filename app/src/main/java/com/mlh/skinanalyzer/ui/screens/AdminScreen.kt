@@ -96,12 +96,32 @@ fun AdminScreen(
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             Text("Captura", style = MaterialTheme.typography.titleLarge, color = Accent)
+            var rotationMsg by remember { mutableStateOf("") }
+            val rotDeg = CapturePrefs.captureRotationDeg(context)
+            val rotCalibrated = CapturePrefs.isRotationCalibrated(context)
             Text(
-                "Orientación fija 90° (preview y archivo). " +
-                    "Ajuste solo los tiempos si hace falta.",
+                if (rotCalibrated) {
+                    "Orientación calibrada: $rotDeg°. " +
+                        "Si las fotos salen apaisadas o al revés, pulse Recalibrar."
+                } else {
+                    "Orientación aún no calibrada (default $rotDeg°). " +
+                        "Se detecta sola en la primera captura con cara."
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),
             )
+            RaisedOutlinedButton(
+                text = "Recalibrar orientación",
+                onClick = {
+                    CapturePrefs.clearRotationCalibration(context)
+                    rotationMsg =
+                        "Calibración borrada. En la próxima captura se detectará de nuevo."
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
+            if (rotationMsg.isNotBlank()) {
+                Text(rotationMsg, style = MaterialTheme.typography.bodySmall, color = Teal)
+            }
             TimingField("Estabilización 1.ª luz (ms)", settleFirst) { settleFirst = it; captureSaved = false }
             TimingField("Entre luces (ms)", settleBetween) { settleBetween = it; captureSaved = false }
             TimingField("Tras disparo (ms)", settleAfter) { settleAfter = it; captureSaved = false }

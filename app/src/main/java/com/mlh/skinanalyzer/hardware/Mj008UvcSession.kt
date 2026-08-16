@@ -614,8 +614,8 @@ class Mj008UvcSession(
     fun isCameraAlive(): Boolean = previewReady.get() && !released.get() && cameraHandler != null
 
     /**
-     * Captura still sin SoundPool OEM. Toma bitmap del TextureView, copia,
-     * aplica rotación 90° en píxeles y escribe JPEG.
+     * Captura still: frame fresco → rotación en píxeles → JPEG.
+     * Verifica dimensiones leyendo el archivo de disco (DISCO=).
      */
     suspend fun captureStill(target: File): Bitmap? {
         if (!isCameraAlive()) {
@@ -625,45 +625,78 @@ class Mj008UvcSession(
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
 
-        // Brief settle so LED exposure updates (caller also delays between lights).
-        delay(120)
-
-        val raw = withContext(kotlinx.coroutines.Dispatchers.Main) {
-            val view = previewView ?: return@withContext null
-            // Prefer getBitmap (no hang). captureStillImage only as fallback once.
-            val fromView = runCatching { view.bitmap }.getOrNull()
-                ?.takeIf { !it.isRecycled && it.width > 0 }
-            val src = fromView
-                ?: runCatching { view.captureStillImage() }.getOrNull()
-                    ?.takeIf { !it.isRecycled && it.width > 0 }
-            // Independent copy — TextureView may reuse the same buffer.
-            src?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
-        }
-
+        val raw = grabFreshFrame()
         if (raw == null) {
-            Log.e(TAG, "captureStill: TextureView bitmap null")
+            Log.e(TAG, "captureStill: no fresh frame")
             return null
         }
 
-        // Fixed 90° — matches preview; ignore any stale SharedPreferences calibration.
-        val deg = CapturePrefs.DEFAULT_ROTATION_DEG
+        // Autocalibrar una sola vez sobre el frame crudo (antes de guardar).
+        if (!CapturePrefs.isRotationCalibrated(activity)) {
+            val detected = withContext(Dispatchers.Default) {
+                com.mlh.skinanalyzer.analysis.oem.OemFaceLandmarks.detectBestRotation(activity, raw)
+            }
+            CapturePrefs.setCaptureRotationDeg(activity, detected)
+        }
+
+        val deg = CapturePrefs.captureRotationDeg(activity)
         val mirror = CapturePrefs.MIRROR_HORIZONTAL
-        val oriented = CapturePrefs.transformBitmap(raw, deg, mirror)
+        // Sensor es 1600×1200 apaisado → rotar a 1200×1600. Si ya viene portrait, no girar de más.
+        val effectiveDeg = when {
+            raw.width > raw.height -> deg
+            raw.height > raw.width && (deg == 90 || deg == 270) -> {
+                Log.i(TAG, "frame ya portrait ${raw.width}x${raw.height} — sin rotación extra")
+                0
+            }
+            else -> deg
+        }
+
+        val oriented = CapturePrefs.transformBitmap(raw, effectiveDeg, mirror)
         if (oriented !== raw) {
             runCatching { raw.recycle() }
         }
 
-        withContext(kotlinx.coroutines.Dispatchers.IO) {
-            target.outputStream().use { out ->
-                oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
+        withContext(Dispatchers.IO) {
+            java.io.FileOutputStream(target).use { fos ->
+                // IMPORTANTE: comprimir oriented, NUNCA raw
+                oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, fos)
+                fos.flush()
+            }
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeFile(target.absolutePath, bounds)
+            Log.i(
+                TAG,
+                "guardado ${target.name} rot=$effectiveDeg mirror=$mirror " +
+                    "memoria=${oriented.width}x${oriented.height} " +
+                    "DISCO=${bounds.outWidth}x${bounds.outHeight} " +
+                    "${target.length()} bytes",
+            )
+            if (bounds.outWidth > bounds.outHeight) {
+                Log.e(TAG, "ARCHIVO APAISADO EN DISCO — la rotación no llegó al fichero")
             }
         }
-        Log.i(
-            TAG,
-            "captureStill OK ${target.name} ${target.length()} bytes " +
-                "rot=$deg mirror=$mirror ${oriented.width}x${oriented.height}",
-        )
         return oriented
+    }
+
+    /**
+     * Descarta frames de la luz anterior y toma uno nuevo (copia independiente).
+     */
+    private suspend fun grabFreshFrame(): Bitmap? {
+        val view = previewView ?: return null
+        // Descartar frames en vuelo del pipeline.
+        repeat(3) {
+            withContext(Dispatchers.Main) {
+                runCatching { view.bitmap }
+            }
+            delay(50)
+        }
+        return withContext(Dispatchers.Main) {
+            val frame = runCatching { view.captureStillImage() }.getOrNull()
+                ?.takeIf { !it.isRecycled && it.width > 0 }
+                ?: runCatching { view.bitmap }.getOrNull()
+                    ?.takeIf { !it.isRecycled && it.width > 0 }
+            frame?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+        }
     }
 
     /**

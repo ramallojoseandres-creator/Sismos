@@ -705,17 +705,27 @@ fun CaptureScreen(
                                                 session.applyLightMode(mode)
                                             }
                                             delay(if (index == 0) settleFirst else settleBetween)
-                                            val still = withTimeoutOrNull(5_000) {
+                                            // Fresh frame + optional MediaPipe calibrate can exceed 5s.
+                                            val still = withTimeoutOrNull(12_000) {
                                                 session.captureStill(oemFile)
                                             }
-                                            if (still == null) {
-                                                Log.e("Capture", "Timeout/null capturando ${mode.shortName}")
+                                            if (still == null || !oemFile.exists() || oemFile.length() < 1_000) {
+                                                Log.e(
+                                                    "Capture",
+                                                    "Timeout/null/vacío capturando ${mode.shortName} " +
+                                                        "exists=${oemFile.exists()} len=${oemFile.length()}",
+                                                )
                                                 status =
                                                     "No se pudo capturar en modo ${mode.displayName}. " +
                                                         "Revise la conexión del equipo y reintente."
                                                 captureBanner = ""
                                                 return@launch
                                             }
+                                            Log.i(
+                                                "Capture",
+                                                "guardado ${oemFile.name} ($n/$total) " +
+                                                    "${oemFile.length()} bytes path=${oemFile.absolutePath}",
+                                            )
                                             if (index < total - 1) {
                                                 delay(settleAfter)
                                             }
