@@ -99,11 +99,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         private set
 
     /** Gushang SkinDetect license status (updated from Application + refresh). */
-    var gushangLicenseStatus by mutableStateOf(GushangLicense.lastMessage)
+    var gushangLicenseStatus by mutableStateOf("Comprobando activación…")
         private set
-    var gushangUserMessage by mutableStateOf(GushangLicense.userFacingMessage)
+    var gushangUserMessage by mutableStateOf("Comprobando activación del equipo…")
         private set
-    var gushangNeedsRestart by mutableStateOf(GushangLicense.needsAppRestart)
+    var gushangNeedsRestart by mutableStateOf(false)
         private set
     var gushangActivated by mutableStateOf(false)
         private set
@@ -249,12 +249,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val ok = if (app is MlhApp) {
                 app.refreshGushangLicense()
             } else {
-                GushangLicense.ensureRegistered(app)
+                GushangLicense.reset()
+                GushangLicense.ensureRegistered()
             }
             gushangActivated = ok
-            gushangLicenseStatus = GushangLicense.lastMessage
-            gushangUserMessage = GushangLicense.userFacingMessage
-            gushangNeedsRestart = GushangLicense.needsAppRestart
+            gushangLicenseStatus = if (ok) "register -> 0 · ACTIVADO" else "El equipo necesita activarse"
+            gushangUserMessage = if (ok) "Equipo activado" else "El equipo necesita activarse"
+            gushangNeedsRestart = !ok
         }
     }
 
@@ -557,17 +558,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     return@launch
                 }
 
-                analyzingPhase = "Comprobando licencia Gushang…"
-                refreshGushangStatus()
-                withContext(Dispatchers.IO) {
-                    val app = getApplication<Application>()
-                    if (app is MlhApp) app.refreshGushangLicense()
-                    else GushangLicense.ensureRegistered(app)
+                analyzingPhase = "Comprobando activación…"
+                val licensed = withContext(Dispatchers.IO) {
+                    GushangLicense.ensureRegistered()
                 }
-                gushangActivated = GushangLicense.isActivated
-                gushangLicenseStatus = GushangLicense.lastMessage
-                gushangUserMessage = GushangLicense.userFacingMessage
-                gushangNeedsRestart = GushangLicense.needsAppRestart
+                gushangActivated = licensed
+                gushangLicenseStatus = if (licensed) "register -> 0 · ACTIVADO" else "El equipo necesita activarse"
+                gushangUserMessage = if (licensed) "Equipo activado" else "El equipo necesita activarse"
+                gushangNeedsRestart = !licensed
 
                 val result: SkinAnalysisResult
                 val pathsOut: Map<String, String>
@@ -591,11 +589,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         )
                         pathsOut = bitmaps.second
                     }
-                    !GushangLicense.isActivated -> {
-                        userMessage =
-                            "El equipo necesita activarse. Abra Admin → Licencia. " +
-                                "Sin activación no se genera informe clínico."
-                        Log.e("MLH", "Analysis blocked — no license: ${GushangLicense.lastMessage}")
+                    !GushangLicense.ensureRegistered() -> {
+                        userMessage = "El equipo necesita activarse"
+                        Log.e("MLH", "Analysis blocked — license not activated")
                         return@launch
                     }
                     else -> {

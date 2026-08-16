@@ -12,8 +12,8 @@ android {
         applicationId = "com.mlh.skinanalyzer"
         minSdk = 26
         targetSdk = 28
-        versionCode = 37
-        versionName = "1.7.2"
+        versionCode = 38
+        versionName = "1.7.3"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // OEM MJ-008 ships both; tablet may be 32-bit primary ABI.

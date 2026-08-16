@@ -22,7 +22,7 @@ class GushangSkinEngine(context: Context) {
     private val landmarks = OemFaceLandmarks(app)
 
     fun canAnalyze(sessionDir: String): Boolean {
-        if (!GushangLicense.isActivated) return false
+        if (!GushangLicense.ensureRegistered()) return false
         val dir = File(sessionDir)
         if (!dir.isDirectory) return false
         return OemCaptureFiles.requiredSources.all { File(dir, it).exists() } &&
@@ -31,7 +31,7 @@ class GushangSkinEngine(context: Context) {
 
     fun analyze(sessionDir: String, patientAge: Int): SkinAnalysisResult? {
         // Hard gate: never invent scores without a valid license.
-        if (!GushangLicense.isActivated) {
+        if (!GushangLicense.ensureRegistered()) {
             Log.e(TAG, "analyze blocked — license not activated")
             return null
         }

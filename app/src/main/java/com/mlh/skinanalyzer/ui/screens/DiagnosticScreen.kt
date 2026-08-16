@@ -209,7 +209,8 @@ private fun buildDiagnosticReport(context: Context): String {
 
     sb.appendLine()
     sb.appendLine("-- Gushang SkinDetect --")
-    sb.appendLine(com.mlh.skinanalyzer.analysis.gushang.GushangLicense.diagnose())
+    sb.appendLine("ensureRegistered=${com.mlh.skinanalyzer.analysis.gushang.GushangLicense.ensureRegistered()}")
+    sb.appendLine(com.mlh.skinanalyzer.analysis.gushang.NativeLibraryLoader.lastError)
     sb.appendLine()
     sb.appendLine("=== fin ===")
     return sb.toString()

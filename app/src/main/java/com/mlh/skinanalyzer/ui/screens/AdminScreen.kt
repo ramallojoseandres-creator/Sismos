@@ -160,25 +160,12 @@ fun AdminScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 color = if (gushangActivated) Teal else Amber,
             )
-            if (!gushangActivated && gushangUserMessage.isNotBlank()) {
-                Text(
-                    gushangUserMessage,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Ink.copy(alpha = 0.55f),
-                )
-            }
             RaisedOutlinedButton(
-                text = if (gushangNeedsRestart) {
-                    "Reactivar (cerrar app por completo)"
-                } else {
-                    "Reactivar"
-                },
+                text = "Reactivar",
                 onClick = {
-                    if (gushangNeedsRestart) {
-                        onImportLicenceResult(
-                            "Cierre la app por completo (quitar de recientes) y ábrala de nuevo.",
-                        )
-                    }
+                    onImportLicenceResult(
+                        "Si falla, cierre la app por completo (quitar de recientes) y ábrala de nuevo.",
+                    )
                     onRefreshGushang()
                 },
                 modifier = Modifier.fillMaxWidth(),

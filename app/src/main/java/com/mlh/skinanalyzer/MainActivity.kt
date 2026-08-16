@@ -45,7 +45,7 @@ class MainActivity : ComponentActivity() {
     private val runtimePermissions = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions(),
     ) { result ->
-        Log.i("MLH", "runtime permissions: $result · skindetect=${GushangLicense.skindetectReadable()}")
+        Log.i("MLH", "runtime permissions: $result")
         refreshStorageGate()
         if (needsAllFilesAccess) {
             // Deferred to Admin; keep soft dialog optional only after explicit request.
@@ -60,8 +60,7 @@ class MainActivity : ComponentActivity() {
         refreshStorageGate()
         Log.i(
             "MLH",
-            "MANAGE_EXTERNAL_STORAGE return · manager=${isAllFilesAccessGranted()} · " +
-                "skindetect=${GushangLicense.skindetectReadable()}",
+            "MANAGE_EXTERNAL_STORAGE return · manager=${isAllFilesAccessGranted()}",
         )
         if (isAllFilesAccessGranted()) {
             showManageStorageDialog = false

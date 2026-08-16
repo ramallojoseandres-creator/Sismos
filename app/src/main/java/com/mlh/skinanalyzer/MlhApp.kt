@@ -33,8 +33,11 @@ class MlhApp : Application() {
     }
 
     fun refreshGushangLicense(): Boolean {
-        gushangReady = GushangLicense.ensureRegistered(this)
-        Log.i("MLH", "Gushang ready=$gushangReady · ${GushangLicense.lastMessage}")
+        // Admin "Reactivar" may call again; reset allows a fresh serial within process.
+        // If JniInterface <clinit> already failed, register will throw until app restart.
+        GushangLicense.reset()
+        gushangReady = GushangLicense.ensureRegistered()
+        Log.i("MLH", "Gushang ready=$gushangReady")
         return gushangReady
     }
 
