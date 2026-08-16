@@ -244,14 +244,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshGushangStatus() {
-        viewModelScope.launch(Dispatchers.IO) {
-            val app = getApplication<Application>()
-            val ok = if (app is MlhApp) {
-                app.refreshGushangLicense()
-            } else {
-                GushangLicense.reset()
-                GushangLicense.ensureRegistered()
+        viewModelScope.launch {
+            val ok = withContext(Dispatchers.IO) {
+                val app = getApplication<Application>()
+                if (app is MlhApp) {
+                    app.refreshGushangLicense()
+                } else {
+                    GushangLicense.reset()
+                    GushangLicense.ensureRegistered()
+                }
             }
+            // Compose state must be written on Main — never from Dispatchers.IO.
             gushangActivated = ok
             gushangLicenseStatus = if (ok) "register -> 0 · ACTIVADO" else "El equipo necesita activarse"
             gushangUserMessage = if (ok) "Equipo activado" else "El equipo necesita activarse"

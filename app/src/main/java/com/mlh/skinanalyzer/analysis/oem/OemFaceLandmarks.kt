@@ -9,6 +9,7 @@ import com.google.mediapipe.tasks.core.BaseOptions
 import com.google.mediapipe.tasks.vision.core.RunningMode
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarker
 import com.google.mediapipe.tasks.vision.facelandmarker.FaceLandmarkerResult
+import com.mlh.skinanalyzer.hardware.CapturePrefs
 import com.zeze.faceDetection.FaceDetectionJni
 import java.io.File
 
@@ -86,6 +87,18 @@ class OemFaceLandmarks(context: Context) {
         }
     }
 
+    fun hasFace(bitmap: Bitmap): Boolean {
+        val lm = landmarker ?: return false
+        return try {
+            val mp = BitmapImageBuilder(bitmap).build()
+            val result = lm.detect(mp)
+            result.faceLandmarks().isNotEmpty()
+        } catch (e: Exception) {
+            Log.w(TAG, "hasFace failed", e)
+            false
+        }
+    }
+
     fun close() {
         runCatching { landmarker?.close() }
     }
@@ -96,5 +109,25 @@ class OemFaceLandmarks(context: Context) {
             context.assets.open("face_landmarker.task").close()
             true
         }.getOrDefault(false)
+
+        /** Prueba 270/90/180/0 sobre [raw]; guarda el primero con cara. */
+        fun detectBestRotation(context: Context, raw: Bitmap): Int {
+            val helper = OemFaceLandmarks(context)
+            try {
+                for (deg in intArrayOf(270, 90, 180, 0)) {
+                    val trial = CapturePrefs.transformBitmap(raw, deg, false)
+                    val ok = helper.hasFace(trial)
+                    if (trial !== raw) runCatching { trial.recycle() }
+                    if (ok) {
+                        Log.i(TAG, "Rotación detectada: $deg")
+                        return deg
+                    }
+                }
+            } finally {
+                helper.close()
+            }
+            Log.w(TAG, "Sin cara en ningún ángulo — usando ${CapturePrefs.DEFAULT_ROTATION_DEG}")
+            return CapturePrefs.DEFAULT_ROTATION_DEG
+        }
     }
 }
