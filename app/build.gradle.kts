@@ -11,14 +11,17 @@ android {
     defaultConfig {
         applicationId = "com.mlh.skinanalyzer"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 35
-        versionName = "1.7.0"
+        targetSdk = 28
+        versionCode = 36
+        versionName = "1.7.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // OEM MJ-008 ships both; tablet may be 32-bit primary ABI.
             abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+        // CORRECCIONES V4: targetSdk 28 = almacenamiento legacy como la app OEM.
+        // Sin esto libSkinDetect fopen(/sdcard/skindetect/licence) falla (register=-1).
+        // APK sideload en una tablet — no Play Store.
     }
 
     buildTypes {

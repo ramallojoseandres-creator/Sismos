@@ -160,7 +160,7 @@ class Mj008UvcSession(
                         Mj008Hardware.PREVIEW_WIDTH,
                         Mj008Hardware.PREVIEW_HEIGHT,
                         /* pixelFormat */ 1,
-                        CapturePrefs.rotationDeg(activity),
+                        CapturePrefs.CAPTURE_ROTATION_DEG,
                     ),
                 )
             } catch (e: Exception) {
@@ -639,9 +639,11 @@ class Mj008UvcSession(
             return null
         }
 
-        val rotation = CapturePrefs.rotationDeg(activity)
-        val mirror = CapturePrefs.mirrorHorizontal(activity)
-        val oriented = CapturePrefs.transformBitmap(raw, rotation, mirror)
+        val oriented = CapturePrefs.transformBitmap(
+            raw,
+            CapturePrefs.CAPTURE_ROTATION_DEG,
+            CapturePrefs.MIRROR_HORIZONTAL,
+        )
         withContext(kotlinx.coroutines.Dispatchers.IO) {
             target.outputStream().use { out ->
                 oriented.compress(android.graphics.Bitmap.CompressFormat.JPEG, 95, out)
@@ -650,7 +652,8 @@ class Mj008UvcSession(
         Log.i(
             TAG,
             "captureStill OK ${target.name} ${target.length()} bytes " +
-                "rot=$rotation mirror=$mirror ${oriented.width}x${oriented.height}",
+                "rot=${CapturePrefs.CAPTURE_ROTATION_DEG} mirror=${CapturePrefs.MIRROR_HORIZONTAL} " +
+                "${oriented.width}x${oriented.height}",
         )
         return oriented
     }
