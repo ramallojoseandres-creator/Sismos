@@ -382,8 +382,26 @@ fun ReportScreen(
                         }
                     }
                 }
-                1 -> MetricList(r.metrics.filter { it.layer == "superficial" })
-                2 -> MetricList(r.metrics.filter { it.layer == "profunda" })
+                1 -> {
+                    val surface = r.metrics.filter {
+                        it.layer.equals("superficial", true) || it.layer.equals("surface", true)
+                    }
+                    if (surface.isEmpty()) {
+                        EmptyTabMessage("Sin datos de capa superficial en este informe.")
+                    } else {
+                        MetricList(surface)
+                    }
+                }
+                2 -> {
+                    val deep = r.metrics.filter {
+                        it.layer.equals("profunda", true) || it.layer.equals("deep", true)
+                    }
+                    if (deep.isEmpty()) {
+                        EmptyTabMessage("Sin datos de capa profunda en este informe.")
+                    } else {
+                        MetricList(deep)
+                    }
+                }
                 3 -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
                         Text("Proporciones faciales (offline)", style = MaterialTheme.typography.titleLarge)
@@ -401,7 +419,11 @@ fun ReportScreen(
                                 "Ancho ≈ ${"%.1f".format(f.eyeUnits)} ojos · simetría ${(f.symmetryScore * 100).toInt()}%",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
-                        }
+                        } ?: Text(
+                            "Sin datos de proporciones en este informe.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Ink.copy(alpha = 0.55f),
+                        )
                     }
                 }
                 4 -> OemMapViewer(
@@ -648,7 +670,28 @@ private fun FaceRevealMap(
 }
 
 @Composable
+private fun EmptyTabMessage(text: String) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = Ink.copy(alpha = 0.55f),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+    }
+}
+
+@Composable
 private fun MetricList(metrics: List<SkinMetric>) {
+    if (metrics.isEmpty()) {
+        EmptyTabMessage("Sin datos para esta capa.")
+        return
+    }
     LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         items(metrics) { m ->
             Column(

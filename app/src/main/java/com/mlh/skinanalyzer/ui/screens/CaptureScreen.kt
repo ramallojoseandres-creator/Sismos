@@ -701,13 +701,17 @@ fun CaptureScreen(
                                                 Log.e("Capture", "camera dead before ${mode.shortName}")
                                                 return@launch
                                             }
-                                            withContext(Dispatchers.IO) {
+                                            // Secuencia fuera del hilo principal (evita Skipped frames).
+                                            val still = withContext(Dispatchers.IO) {
                                                 session.applyLightMode(mode)
-                                            }
-                                            delay(if (index == 0) settleFirst else settleBetween)
-                                            // Fresh frame + optional MediaPipe calibrate can exceed 5s.
-                                            val still = withTimeoutOrNull(12_000) {
-                                                session.captureStill(oemFile)
+                                                delay(if (index == 0) settleFirst else settleBetween)
+                                                val grabbed = withTimeoutOrNull(15_000) {
+                                                    session.captureStill(oemFile)
+                                                }
+                                                if (index < total - 1) {
+                                                    delay(settleAfter)
+                                                }
+                                                grabbed
                                             }
                                             if (still == null || !oemFile.exists() || oemFile.length() < 1_000) {
                                                 Log.e(
@@ -726,9 +730,6 @@ fun CaptureScreen(
                                                 "guardado ${oemFile.name} ($n/$total) " +
                                                     "${oemFile.length()} bytes path=${oemFile.absolutePath}",
                                             )
-                                            if (index < total - 1) {
-                                                delay(settleAfter)
-                                            }
                                             still
                                         }
                                         else -> {

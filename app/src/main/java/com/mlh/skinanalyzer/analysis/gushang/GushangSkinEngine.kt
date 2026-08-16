@@ -91,20 +91,36 @@ class GushangSkinEngine(context: Context) {
                 Log.i(TAG, "$key=$score")
             }
 
-            runFloat("sebum", "Sebo", "surface", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinOilContent)
-            runFloat("moisture", "Hidratación", "surface", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinWaterContent)
-            runFloat("tone", "Luminosidad", "surface", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinWhiteness)
-            runFloat("elasticity", "Elasticidad", "deep", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinElasticity)
-            runFloat("sensitivity", "Sensibilidad", "deep", OemCaptureFiles.POSITIVE, lm.positiveX, lm.positiveY, JniInterface::skinSensitivity)
-            runFloat("acne", "Acné", "surface", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinAcne)
-            runFloat("blackheads", "Puntos negros", "surface", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinBlackheads)
-            runFloat("scars", "Cicatrices / marcas", "surface", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinScars)
-            runFloat("cuticle", "Cutícula / textura", "surface", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinCuticle)
-            runFloat("pigmentation", "Manchas", "surface", OemCaptureFiles.POSITIVE, lm.positiveX, lm.positiveY, JniInterface::skinSplotColor)
-            runFloat("hair", "Vello", "surface", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinHair)
-            runFloat("exudates", "Exudados", "surface", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinExudates)
-            runFloat("heavy_metal", "Metales", "deep", OemCaptureFiles.UV, lm.whiteX, lm.whiteY, JniInterface::skinHeavyMetal)
-            runFloat("deep_acne", "Acné profundo", "deep", OemCaptureFiles.UV, lm.whiteX, lm.whiteY, JniInterface::skinAcneInflammation)
+            runFloat("sebum", "Sebo", "superficial", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinOilContent)
+            runFloat("moisture", "Hidratación", "superficial", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinWaterContent)
+            runFloat("tone", "Luminosidad", "superficial", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinWhiteness)
+            runFloat("elasticity", "Elasticidad", "profunda", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinElasticity)
+            runFloat("sensitivity", "Sensibilidad", "profunda", OemCaptureFiles.POSITIVE, lm.positiveX, lm.positiveY, JniInterface::skinSensitivity)
+            runFloat("acne", "Acné", "superficial", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinAcne)
+            runFloat("blackheads", "Puntos negros", "superficial", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinBlackheads)
+            runFloat("scars", "Cicatrices / marcas", "superficial", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinScars)
+            runFloat("cuticle", "Cutícula / textura", "superficial", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinCuticle)
+            runFloat("pigmentation", "Manchas", "superficial", OemCaptureFiles.POSITIVE, lm.positiveX, lm.positiveY, JniInterface::skinSplotColor)
+            runFloat("hair", "Vello", "superficial", OemCaptureFiles.WHITE, lm.whiteX, lm.whiteY, JniInterface::skinHair)
+            runFloat("exudates", "Exudados", "superficial", OemCaptureFiles.NEGATIVE, lm.negativeX, lm.negativeY, JniInterface::skinExudates)
+            runFloat("heavy_metal", "Metales", "profunda", OemCaptureFiles.UV, lm.whiteX, lm.whiteY, JniInterface::skinHeavyMetal)
+            runFloat("deep_acne", "Acné profundo", "profunda", OemCaptureFiles.UV, lm.whiteX, lm.whiteY, JniInterface::skinAcneInflammation)
+
+            // Mapas faciales (heat / 3D) — mismas rutas e landmarks que el resto.
+            val whiteSrc = File(dir, OemCaptureFiles.WHITE)
+            if (whiteSrc.exists()) {
+                val (bytes, w, h) = pack(lm.whiteX, lm.whiteY, whiteSrc)
+                val heatOut = File(outDir, "heatmap.jpg").absolutePath
+                val threeDOut = File(outDir, "three_d.jpg").absolutePath
+                val heatRc = runCatching {
+                    JniInterface.skinHeatMap(whiteSrc.absolutePath, heatOut, bytes, w, h)
+                }.onFailure { Log.e(TAG, "skinHeatMap failed", it) }.getOrDefault(-1)
+                val threeRc = runCatching {
+                    JniInterface.skinThreeDImage(whiteSrc.absolutePath, threeDOut, bytes, w, h)
+                }.onFailure { Log.e(TAG, "skinThreeDImage failed", it) }.getOrDefault(-1)
+                Log.i(TAG, "skinHeatMap rc=$heatRc outExists=${File(heatOut).exists()}")
+                Log.i(TAG, "skinThreeDImage rc=$threeRc outExists=${File(threeDOut).exists()}")
+            }
 
             if (metrics.isEmpty()) return null
             val priority = metrics.sortedByDescending { it.score }.take(3).map { it.key }

@@ -33,6 +33,7 @@ import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.data.PhoneNormalizer
 import com.mlh.skinanalyzer.data.PendingPatientImport
 import com.mlh.skinanalyzer.data.ProductRec
+import com.mlh.skinanalyzer.analysis.oem.OemIndicatorResult
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
@@ -531,10 +532,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun getPatient(id: Long) = patientsDao.getById(id)
 
     suspend fun guidesFor(keys: List<String>): List<CareGuide> =
-        if (keys.isEmpty()) emptyList() else careDao.forMetrics(keys)
+        if (keys.isEmpty()) {
+            emptyList()
+        } else {
+            careDao.forMetrics(keys.distinct()).distinctBy { it.metricKey }
+        }
 
     suspend fun productsFor(keys: List<String>): List<ProductRec> =
-        if (keys.isEmpty()) emptyList() else productDao.forMetrics(keys)
+        if (keys.isEmpty()) {
+            emptyList()
+        } else {
+            productDao.forMetrics(keys.distinct()).distinctBy { it.name }
+        }
 
     fun filterMetrics(result: SkinAnalysisResult): SkinAnalysisResult {
         val enabled = indicatorPrefs.filter { it.enabled }.map { it.key }.toSet()
@@ -572,6 +581,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
                 val result: SkinAnalysisResult
                 val pathsOut: Map<String, String>
+                var gushangMapOverlays: List<OemIndicatorResult> = emptyList()
 
                 when {
                     // Explicit Demo (Settings only) — never as silent USB fallback.
@@ -612,6 +622,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         result = filterMetrics(gushangResult)
                         pathsOut = imagePaths
+                        // Mapas generados por skinHeatMap / skinThreeDImage
+                        val mapDir = File(sessionDir, "gushang")
+                        val overlays = buildList {
+                            val heat = File(mapDir, "heatmap.jpg")
+                            if (heat.exists() && heat.length() > 0) {
+                                add(
+                                    OemIndicatorResult(
+                                        key = "heatmap",
+                                        oemType = "heat_map",
+                                        displayName = "Mapa de calor",
+                                        layer = "superficial",
+                                        score = 0,
+                                        levelLabel = "",
+                                        overlayPath = heat.absolutePath,
+                                    ),
+                                )
+                            }
+                            val three = File(mapDir, "three_d.jpg")
+                            if (three.exists() && three.length() > 0) {
+                                add(
+                                    OemIndicatorResult(
+                                        key = "three_d",
+                                        oemType = "three_d",
+                                        displayName = "Imagen 3D",
+                                        layer = "profunda",
+                                        score = 0,
+                                        levelLabel = "",
+                                        overlayPath = three.absolutePath,
+                                    ),
+                                )
+                            }
+                        }
+                        gushangMapOverlays = overlays
                     }
                 }
 
@@ -641,7 +684,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             decodeBitmap(imagePaths["White"] ?: imagePaths.values.firstOrNull().orEmpty()),
                         ),
                     ),
-                    oemIndicatorsJson = "",
+                    oemIndicatorsJson = gson.toJson(gushangMapOverlays),
                     sessionDir = sessionDir,
                 )
                 val sid = withContext(Dispatchers.IO) { sessionsDao.insert(session) }

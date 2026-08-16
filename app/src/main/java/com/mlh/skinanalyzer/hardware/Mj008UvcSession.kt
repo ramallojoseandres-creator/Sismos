@@ -11,7 +11,9 @@ import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
 import android.view.Surface
+import com.serenegiant.usb.IFrameCallback
 import com.serenegiant.usb.USBMonitor
+import com.serenegiant.usb.UVCCamera
 import com.serenegiant.usbcameracommon.UVCCameraHandler
 import com.serenegiant.widget.CameraViewInterface
 import com.serenegiant.widget.UVCCameraTextureView
@@ -21,6 +23,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import java.io.File
+import java.nio.ByteBuffer
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
@@ -61,6 +64,22 @@ class Mj008UvcSession(
 
     @Volatile var lightsOn: Boolean = false
         private set
+
+    /** Only copy RGBX bytes while a still capture is waiting (avoids GC thrash). */
+    private val wantSensorFrame = AtomicBoolean(false)
+    private val latestSensorFrame = AtomicReference<ByteArray?>(null)
+    private val frameCallbackInstalled = AtomicBoolean(false)
+    private val sensorFrameCallback = IFrameCallback { buf ->
+        if (!wantSensorFrame.get() || buf == null) return@IFrameCallback
+        try {
+            val dup = buf.duplicate()
+            val bytes = ByteArray(dup.remaining())
+            dup.get(bytes)
+            latestSensorFrame.set(bytes)
+        } catch (e: Exception) {
+            Log.w(TAG, "frame callback copy failed", e)
+        }
+    }
 
     val isReady: Boolean
         get() = previewReady.get() && !released.get()
@@ -455,6 +474,7 @@ class Mj008UvcSession(
                     opening.set(false)
                     lastStatus = "UVC frontal OK: ${UsbXuLightController.describe(device)}"
                     Log.i(TAG, lastStatus)
+                    installSensorFrameCallback()
                     completeReady(true)
                     usbIo.postDelayed({
                         if (started.get() && !released.get() && previewReady.get()) {
@@ -614,7 +634,7 @@ class Mj008UvcSession(
     fun isCameraAlive(): Boolean = previewReady.get() && !released.get() && cameraHandler != null
 
     /**
-     * Captura still: frame fresco → rotación en píxeles → JPEG.
+     * Captura still desde el callback del sensor (RGBX), nunca desde TextureView.getBitmap().
      * Verifica dimensiones leyendo el archivo de disco (DISCO=).
      */
     suspend fun captureStill(target: File): Bitmap? {
@@ -625,9 +645,14 @@ class Mj008UvcSession(
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
 
-        val raw = grabFreshFrame()
+        installSensorFrameCallback()
+        // Descartar frames en vuelo de la luz anterior; luego tomar uno nuevo del sensor.
+        repeat(2) {
+            awaitNewSensorFrame(timeoutMs = 3_000)?.recycle()
+        }
+        val raw = awaitNewSensorFrame(timeoutMs = 3_000)
         if (raw == null) {
-            Log.e(TAG, "captureStill: no fresh frame")
+            Log.e(TAG, "captureStill: no fresh sensor frame")
             return null
         }
 
@@ -679,23 +704,93 @@ class Mj008UvcSession(
     }
 
     /**
-     * Descarta frames de la luz anterior y toma uno nuevo (copia independiente).
+     * Frame nuevo del sensor vía [IFrameCallback] (PIXEL_FORMAT_RGBX).
+     * No usa TextureView.getBitmap() — esa API devolvía el mismo preview cacheado.
      */
-    private suspend fun grabFreshFrame(): Bitmap? {
-        val view = previewView ?: return null
-        // Descartar frames en vuelo del pipeline.
-        repeat(3) {
-            withContext(Dispatchers.Main) {
-                runCatching { view.bitmap }
+    private suspend fun awaitNewSensorFrame(timeoutMs: Long): Bitmap? {
+        latestSensorFrame.set(null)
+        wantSensorFrame.set(true)
+        try {
+            val deadline = SystemClock.elapsedRealtime() + timeoutMs
+            while (SystemClock.elapsedRealtime() < deadline) {
+                val bytes = latestSensorFrame.getAndSet(null)
+                if (bytes != null) {
+                    return withContext(Dispatchers.Default) { rgbxBytesToBitmap(bytes) }
+                }
+                delay(30)
             }
-            delay(50)
+            Log.e(TAG, "Timeout esperando frame nuevo de la cámara (${timeoutMs}ms)")
+            return null
+        } finally {
+            wantSensorFrame.set(false)
         }
-        return withContext(Dispatchers.Main) {
-            val frame = runCatching { view.captureStillImage() }.getOrNull()
-                ?.takeIf { !it.isRecycled && it.width > 0 }
-                ?: runCatching { view.bitmap }.getOrNull()
-                    ?.takeIf { !it.isRecycled && it.width > 0 }
-            frame?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+    }
+
+    private fun installSensorFrameCallback() {
+        val cam = resolveUvcCamera() ?: run {
+            Log.w(TAG, "installSensorFrameCallback: UVCCamera null")
+            return
+        }
+        try {
+            cam.setFrameCallback(sensorFrameCallback, UVCCamera.PIXEL_FORMAT_RGBX)
+            frameCallbackInstalled.set(true)
+            Log.i(TAG, "IFrameCallback RGBX instalado (sensor frames)")
+        } catch (e: Exception) {
+            Log.e(TAG, "setFrameCallback failed", e)
+        }
+    }
+
+    private fun resolveUvcCamera(): UVCCamera? {
+        val handler = cameraHandler ?: return null
+        return try {
+            // AbstractUVCCameraHandler is package-private — reflect by name.
+            val handlerClass = Class.forName(
+                "com.serenegiant.usbcameracommon.AbstractUVCCameraHandler",
+            )
+            val weakField = handlerClass.getDeclaredField("mWeakThread")
+            weakField.isAccessible = true
+            val weak = weakField.get(handler) as? java.lang.ref.WeakReference<*>
+            val thread = weak?.get() ?: return null
+            val camField = thread.javaClass.getDeclaredField("mUVCCamera")
+            camField.isAccessible = true
+            camField.get(thread) as? UVCCamera
+        } catch (e: Exception) {
+            Log.e(TAG, "resolveUvcCamera failed", e)
+            null
+        }
+    }
+
+    /**
+     * Convierte buffer RGBX del callback nativo a Bitmap (misma lógica que OEM still callback).
+     */
+    private fun rgbxBytesToBitmap(bytes: ByteArray): Bitmap? {
+        val handler = cameraHandler ?: return null
+        val w = handler.width.coerceAtLeast(1)
+        val h = handler.height.coerceAtLeast(1)
+        val orientation = handler.orientation
+        val (bw, bh) = if (orientation == 90 || orientation == 270) {
+            h to w
+        } else {
+            w to h
+        }
+        val expected = bw * bh * 4
+        val (useW, useH) = when {
+            bytes.size >= expected -> bw to bh
+            bytes.size >= w * h * 4 -> w to h
+            else -> {
+                Log.e(TAG, "RGBX size mismatch bytes=${bytes.size} expected=$expected (${bw}x$bh)")
+                return null
+            }
+        }
+        return try {
+            val bmp = Bitmap.createBitmap(useW, useH, Bitmap.Config.ARGB_8888)
+            val buf = ByteBuffer.wrap(bytes, 0, useW * useH * 4)
+            bmp.copyPixelsFromBuffer(buf)
+            Log.d(TAG, "sensor frame ${useW}x${useH} orient=$orientation bytes=${bytes.size}")
+            bmp
+        } catch (e: Exception) {
+            Log.e(TAG, "rgbxBytesToBitmap failed", e)
+            null
         }
     }
 
@@ -721,6 +816,12 @@ class Mj008UvcSession(
         cameraHandler = null
         previewView = null
         openedDevice.set(null)
+        wantSensorFrame.set(false)
+        latestSensorFrame.set(null)
+        frameCallbackInstalled.set(false)
+        runCatching {
+            resolveUvcCamera()?.setFrameCallback(null, 0)
+        }
         previewSurface?.release()
         previewSurface = null
         // Fire-and-forget teardown on a daemon — never join.
