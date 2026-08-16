@@ -8,7 +8,7 @@ import android.util.Log
 
 /**
  * Preferencias de captura. Rotación en píxeles (no EXIF).
- * Default 270° (Screen Rotation del firmware); se calibra una vez con MediaPipe.
+ * Default 90° (misma orientación que el preview en pantalla); se calibra una vez con MediaPipe.
  */
 object CapturePrefs {
     private const val TAG = "CapturePrefs"
@@ -20,8 +20,8 @@ object CapturePrefs {
     private const val KEY_SETTLE_AFTER = "capture_settle_after_ms"
     private const val KEY_PRE_FIRST = "capture_pre_first_ms"
 
-    /** Mejor apuesta firmware hasta autocalibrar. */
-    const val DEFAULT_ROTATION_DEG = 270
+    /** Mejor apuesta: coincide con la orientación del preview en pantalla. */
+    const val DEFAULT_ROTATION_DEG = 90
     const val MIRROR_HORIZONTAL = false
 
     const val DEFAULT_SETTLE_FIRST_MS = 2_000L

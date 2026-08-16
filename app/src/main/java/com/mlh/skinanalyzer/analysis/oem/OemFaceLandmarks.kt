@@ -114,7 +114,7 @@ class OemFaceLandmarks(context: Context) {
         fun detectBestRotation(context: Context, raw: Bitmap): Int {
             val helper = OemFaceLandmarks(context)
             try {
-                for (deg in intArrayOf(270, 90, 180, 0)) {
+                for (deg in intArrayOf(90, 270, 180, 0)) {
                     val trial = CapturePrefs.transformBitmap(raw, deg, false)
                     val ok = helper.hasFace(trial)
                     if (trial !== raw) runCatching { trial.recycle() }

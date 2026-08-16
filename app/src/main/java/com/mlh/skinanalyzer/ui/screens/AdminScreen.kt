@@ -97,7 +97,7 @@ fun AdminScreen(
         ) {
             Text("Captura", style = MaterialTheme.typography.titleLarge, color = Accent)
             Text(
-                "Orientación automática (270° por defecto, se calibra con la 1.ª foto). " +
+                "Orientación automática (90° por defecto, se calibra con la 1.ª foto). " +
                     "Ajuste solo los tiempos si hace falta.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = Ink.copy(alpha = 0.55f),
