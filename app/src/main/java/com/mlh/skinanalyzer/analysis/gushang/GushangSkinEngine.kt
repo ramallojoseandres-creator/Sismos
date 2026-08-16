@@ -9,6 +9,7 @@ import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
 import com.mlh.skinanalyzer.analysis.SkinMetric
 import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.analysis.oem.OemFaceLandmarks
+import com.mlh.skinanalyzer.analysis.oem.OemIndicatorCatalog
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -122,6 +123,13 @@ class GushangSkinEngine(context: Context) {
                     higherIsWorse = mayorEsPeor,
                     spectrumLabel = spectrumLabel,
                     spectrumFile = srcName,
+                    unidad = when {
+                        key in setOf("sebum", "moisture", "collagen", "sensitivity", "dark_circles", "deep_pigment") ->
+                            com.mlh.skinanalyzer.analysis.Unidad.PORCENTAJE
+                        key == "wrinkles" -> com.mlh.skinanalyzer.analysis.Unidad.TIRA
+                        else -> com.mlh.skinanalyzer.analysis.Unidad.CANTIDAD
+                    },
+                    estilo = OemIndicatorCatalog.estiloFor(key),
                 )
                 Log.i(TAG, "$key=$s level=${level.label} spectrum=$spectrumLabel file=$srcName")
             }

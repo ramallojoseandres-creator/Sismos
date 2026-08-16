@@ -411,7 +411,7 @@ fun ReportScreen(
                 }
                 3 -> LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     item {
-                        Text("Proporciones faciales (offline)", style = MaterialTheme.typography.titleLarge)
+                        Text("Proporciones faciales", style = MaterialTheme.typography.titleLarge)
                         Spacer(Modifier.height(6.dp))
                         Text(r.facialRatioNote, style = MaterialTheme.typography.bodyLarge)
                         r.facial?.let { f ->
@@ -426,11 +426,45 @@ fun ReportScreen(
                                 "Ancho ≈ ${"%.1f".format(f.eyeUnits)} ojos · simetría ${(f.symmetryScore * 100).toInt()}%",
                                 style = MaterialTheme.typography.bodyLarge,
                             )
-                        } ?: Text(
-                            "Sin datos de proporciones en este informe.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = Ink.copy(alpha = 0.55f),
-                        )
+                        }
+                        val mm = r.facialMm
+                        if (mm != null && mm.hasAny()) {
+                            Spacer(Modifier.height(12.dp))
+                            Text("Medidas (mm)", style = MaterialTheme.typography.titleLarge)
+                            Spacer(Modifier.height(6.dp))
+                            MmRow("Longitud de la cara", mm.faceLengthMm)
+                            MmRow("Ancho de la mejilla", mm.cheekWidthMm)
+                            MmRow("Anchura temporal", mm.temporalWidthMm)
+                            MmRow("Anchura ángulo mandibular", mm.mandibleAngleWidthMm)
+                            MmRow("Ángulo mandibular (°)", mm.jawAngleDeg)
+                            MmRow("Tercio superior", mm.upperThirdMm)
+                            MmRow("Tercio medio", mm.middleThirdMm)
+                            MmRow("Tercio inferior", mm.lowerThirdMm)
+                            MmRow("Espacio entre ojos", mm.innerEyeSpaceMm)
+                            MmRow("Ancho ojo derecho", mm.rightEyeWidthMm)
+                            MmRow("Ancho ojo izquierdo", mm.leftEyeWidthMm)
+                            MmRow("Triángulo de oro (°)", mm.goldenTriangleDeg)
+                            MmRow("Longitud barbilla", mm.chinLengthMm)
+                            MmRow("Anchura barbilla", mm.chinWidthMm)
+                            MmRow("Anchura cejas", mm.browWidthMm)
+                            MmRow("Grosor cejas", mm.browThickMm)
+                            MmRow("Altura cejas", mm.browHeightMm)
+                            MmRow("Anchura ala nasal", mm.noseAlaWidthMm)
+                            MmRow("Altura labios", mm.lipHeightMm)
+                            if (mm.source.isNotBlank()) {
+                                Text(
+                                    "Fuente: ${mm.source}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = Ink.copy(alpha = 0.45f),
+                                )
+                            }
+                        } else if (r.facial == null) {
+                            Text(
+                                "Sin datos de proporciones en este informe.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Ink.copy(alpha = 0.55f),
+                            )
+                        }
                     }
                 }
                 4 -> OemMapViewer(
@@ -763,6 +797,19 @@ private fun FindingPhotoCard(
 }
 
 @Composable
+private fun MmRow(label: String, value: Float?) {
+    if (value == null || value <= 0f) return
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp),
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+        Text("%.2f".format(value), style = MaterialTheme.typography.bodyMedium, color = Accent)
+    }
+}
+
+@Composable
 private fun EmptyTabMessage(text: String) {
     Box(
         Modifier
@@ -796,18 +843,50 @@ private fun MetricList(metrics: List<SkinMetric>) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(m.name, style = MaterialTheme.typography.titleLarge, modifier = Modifier.weight(1f))
                     Text(
-                        "N${m.level.value}",
+                        m.level.label,
                         color = Color(android.graphics.Color.parseColor(m.level.colorHex)),
                         style = MaterialTheme.typography.titleLarge,
                     )
                 }
                 LinearProgressIndicator(
-                    progress = { m.score / 100f },
+                    progress = { (m.level.value / 5f).coerceIn(0f, 1f) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .padding(vertical = 6.dp),
                     color = Color(android.graphics.Color.parseColor(m.level.colorHex)),
                 )
+                Text(
+                    "Score ${"%.1f".format(m.score)}" +
+                        (m.unidad?.let { " ${it.label}" } ?: "") +
+                        (m.estilo?.let { " · ${it.name}" } ?: ""),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Ink.copy(alpha = 0.55f),
+                )
+                if (m.mediciones.isNotEmpty()) {
+                    Spacer(Modifier.height(6.dp))
+                    Text("Por zona", style = MaterialTheme.typography.titleLarge)
+                    m.mediciones.forEach { med ->
+                        val unit = med.unidad.label
+                        val valueText = if (med.unidad == com.mlh.skinanalyzer.analysis.Unidad.PORCENTAJE) {
+                            "${med.valor.toInt()}%"
+                        } else {
+                            "${med.valor.toInt()} $unit"
+                        }
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .padding(vertical = 2.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                med.zona.label,
+                                style = MaterialTheme.typography.bodyMedium,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(valueText, style = MaterialTheme.typography.bodyMedium, color = Accent)
+                        }
+                    }
+                }
                 Text(m.description, style = MaterialTheme.typography.bodyMedium)
                 if (m.spectrumLabel.isNotBlank()) {
                     Text(

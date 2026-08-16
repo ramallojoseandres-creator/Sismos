@@ -36,6 +36,9 @@ data class SkinMetric(
     val spectrumLabel: String = "",
     /** Archivo de captura relativo a la sesión (p. ej. blue.jpg). */
     val spectrumFile: String = "",
+    val mediciones: List<Medicion> = emptyList(),
+    val unidad: Unidad? = null,
+    val estilo: EstiloOverlay? = null,
 )
 
 data class SkinAnalysisResult(
@@ -52,6 +55,8 @@ data class SkinAnalysisResult(
      */
     val analysisEngine: String = ENGINE_UNKNOWN,
     val isClinicalLicensed: Boolean = false,
+    val facialMm: FacialMmMeasures? = null,
+    val parametros: List<ParametroDetalle> = emptyList(),
 ) {
     companion object {
         const val ENGINE_GUSHANG = "Gushang SkinDetect (licenciado)"

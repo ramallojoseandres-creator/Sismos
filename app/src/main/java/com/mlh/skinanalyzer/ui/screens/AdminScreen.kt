@@ -122,6 +122,28 @@ fun AdminScreen(
             if (rotationMsg.isNotBlank()) {
                 Text(rotationMsg, style = MaterialTheme.typography.bodySmall, color = Teal)
             }
+            var pxMm by remember { mutableStateOf(CapturePrefs.pxMmScale(context).toString()) }
+            OutlinedTextField(
+                value = pxMm,
+                onValueChange = { pxMm = it.filter { c -> c.isDigit() || c == '.' }.take(6) },
+                label = { Text("Escala px→mm (proporciones)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+                shape = RoundedCornerShape(4.dp),
+            )
+            RaisedOutlinedButton(
+                text = "Guardar escala px→mm",
+                onClick = {
+                    val v = pxMm.toFloatOrNull()
+                    if (v != null && v > 0f) {
+                        CapturePrefs.setPxMmScale(context, v)
+                        rotationMsg = "Escala px→mm = $v"
+                    } else {
+                        rotationMsg = "Valor de escala inválido"
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            )
             TimingField("Estabilización 1.ª luz (ms)", settleFirst) { settleFirst = it; captureSaved = false }
             TimingField("Entre luces (ms)", settleBetween) { settleBetween = it; captureSaved = false }
             TimingField("Tras disparo (ms)", settleAfter) { settleAfter = it; captureSaved = false }

@@ -19,9 +19,12 @@ object CapturePrefs {
     private const val KEY_SETTLE_BETWEEN = "capture_settle_between_ms"
     private const val KEY_SETTLE_AFTER = "capture_settle_after_ms"
     private const val KEY_PRE_FIRST = "capture_pre_first_ms"
+    private const val KEY_PX_MM_SCALE = "capture_px_mm_scale"
 
     const val DEFAULT_ROTATION_DEG = 90
     const val MIRROR_HORIZONTAL = false
+    /** mm por píxel en la posición del mentón (calibrar en Admin). */
+    const val DEFAULT_PX_MM_SCALE = 0.18f
 
     const val DEFAULT_SETTLE_FIRST_MS = 2_000L
     const val DEFAULT_SETTLE_BETWEEN_MS = 2_000L
@@ -99,6 +102,14 @@ object CapturePrefs {
         val out = Bitmap.createBitmap(src, 0, 0, src.width, src.height, m, true)
         Log.d(TAG, "transform $deg° ${src.width}x${src.height} → ${out.width}x${out.height}")
         return out
+    }
+
+    fun pxMmScale(ctx: Context): Float =
+        prefs(ctx).getFloat(KEY_PX_MM_SCALE, DEFAULT_PX_MM_SCALE)
+
+    fun setPxMmScale(ctx: Context, scale: Float) {
+        prefs(ctx).edit().putFloat(KEY_PX_MM_SCALE, scale.coerceIn(0.01f, 2f)).apply()
+        Log.i(TAG, "px→mm scale=$scale")
     }
 
     fun rotationDeg(ctx: Context): Int = captureRotationDeg(ctx)

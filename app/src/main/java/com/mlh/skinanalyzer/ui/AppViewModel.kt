@@ -34,6 +34,8 @@ import com.mlh.skinanalyzer.data.PhoneNormalizer
 import com.mlh.skinanalyzer.data.PendingPatientImport
 import com.mlh.skinanalyzer.data.ProductRec
 import com.mlh.skinanalyzer.analysis.oem.OemIndicatorResult
+import com.mlh.skinanalyzer.analysis.oem.OemSkinEngine
+import com.mlh.skinanalyzer.hardware.CapturePrefs
 import com.mlh.skinanalyzer.hardware.Mj008Hardware
 import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
@@ -620,9 +622,49 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             Log.e("MLH", "Gushang analyze returned null — hard stop")
                             return@launch
                         }
-                        result = filterMetrics(gushangResult)
+
+                        analyzingPhase = "Desglose por zonas y mapas…"
+                        val oemEngine = OemSkinEngine(getApplication())
+                        val oemBundle = withContext(Dispatchers.Default) {
+                            runCatching { oemEngine.analyze(sessionDir, ageAt) }.getOrNull()
+                        }
+                        val oemParametros = oemBundle?.let { oemEngine.toParametros(it) }.orEmpty()
+                        val facialMm = oemBundle?.let { oemEngine.parseFacialMm(it.facialRatioJson) }
+                        oemEngine.close()
+
+                        val mergedMetrics = gushangResult.metrics.map { m ->
+                            val oem = oemParametros.firstOrNull { it.key == m.key }
+                            if (oem == null) {
+                                m
+                            } else {
+                                m.copy(
+                                    mediciones = oem.mediciones,
+                                    unidad = m.unidad
+                                        ?: com.mlh.skinanalyzer.analysis.oem.OemIndicatorCatalog.unidadFor(m.key),
+                                    estilo = m.estilo ?: oem.estilo,
+                                    level = if (oem.mediciones.isNotEmpty()) oem.severidad else m.level,
+                                    description = if (oem.mediciones.isNotEmpty()) {
+                                        m.description + " · desglose por zona OEM."
+                                    } else {
+                                        m.description
+                                    },
+                                )
+                            }
+                        }
+                        result = filterMetrics(
+                            gushangResult.copy(
+                                metrics = mergedMetrics,
+                                parametros = oemParametros,
+                                facialMm = facialMm?.takeIf { it.hasAny() },
+                                facialRatioNote = if (facialMm?.hasAny() == true) {
+                                    "Proporciones faciales OEM en mm (skinFaceLandMark)."
+                                } else {
+                                    gushangResult.facialRatioNote
+                                },
+                            ),
+                        )
                         pathsOut = imagePaths
-                        // Mapas: heat/3D + overlays por hallazgo clave
+
                         val mapDir = File(sessionDir, "gushang")
                         val overlays = buildList {
                             fun addMap(key: String, oemType: String, name: String, layer: String, file: File) {
@@ -633,11 +675,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                                             oemType = oemType,
                                             displayName = name,
                                             layer = layer,
-                                            score = gushangResult.metrics.firstOrNull { it.key == key }?.score?.toInt() ?: 0,
-                                            levelLabel = gushangResult.metrics.firstOrNull { it.key == key }?.level?.label.orEmpty(),
+                                            score = mergedMetrics.firstOrNull { it.key == key }?.score?.toInt() ?: 0,
+                                            levelLabel = mergedMetrics.firstOrNull { it.key == key }?.level?.label.orEmpty(),
                                             overlayPath = file.absolutePath,
+                                            mediciones = oemParametros.firstOrNull { it.key == key }?.mediciones.orEmpty(),
                                         ),
                                     )
+                                }
+                            }
+                            oemBundle?.indicators?.forEach { ind ->
+                                val path = ind.overlayPath
+                                if (!path.isNullOrBlank() && File(path).exists()) {
+                                    add(ind)
                                 }
                             }
                             addMap("heatmap", "heat_map", "Mapa de calor", "superficial", File(mapDir, "heatmap.jpg"))
@@ -647,9 +696,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                             addMap("blackheads", "skin_blackhead", "Puntos negros", "superficial", File(mapDir, "blackheads_out.jpg"))
                             addMap("pores", "skin_pore", "Poros", "superficial", File(mapDir, "pores_out.jpg"))
                             addMap("pigmentation", "skin_pigmentation", "Pigmentación", "superficial", File(mapDir, "pigmentation_out.jpg"))
-                            addMap("deep_pigment", "skin_pigmentation", "Pigmentación profunda", "profunda", File(mapDir, "deep_pigment_out.jpg"))
                             addMap("porphyrin", "skin_porphyrin", "Porfirinas", "profunda", File(mapDir, "porphyrin_out.jpg"))
-                        }
+                        }.distinctBy { it.key }
                         gushangMapOverlays = overlays
                     }
                 }
