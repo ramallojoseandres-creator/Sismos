@@ -160,8 +160,7 @@ class Mj008UvcSession(
                         Mj008Hardware.PREVIEW_WIDTH,
                         Mj008Hardware.PREVIEW_HEIGHT,
                         /* pixelFormat */ 1,
-                        /* orientation: preview only; JPEG rotation is CapturePrefs */
-                        Mj008Hardware.PREVIEW_ORIENTATION,
+                        Mj008Hardware.PREVIEW_ORIENTATION, // 90 — same as on-screen preview
                     ),
                 )
             } catch (e: Exception) {
@@ -615,8 +614,8 @@ class Mj008UvcSession(
     fun isCameraAlive(): Boolean = previewReady.get() && !released.get() && cameraHandler != null
 
     /**
-     * Captura still fresco (sin SoundPool OEM). Descarta frames viejos del pipeline,
-     * copia el bitmap, rota en píxeles y escribe JPEG. Log con tamaño real.
+     * Captura still sin SoundPool OEM. Toma bitmap del TextureView, copia,
+     * aplica rotación 90° en píxeles y escribe JPEG.
      */
     suspend fun captureStill(target: File): Bitmap? {
         if (!isCameraAlive()) {
@@ -626,21 +625,28 @@ class Mj008UvcSession(
         target.parentFile?.mkdirs()
         if (target.exists()) target.delete()
 
-        val raw = grabFreshFrame()
+        // Brief settle so LED exposure updates (caller also delays between lights).
+        delay(120)
+
+        val raw = withContext(kotlinx.coroutines.Dispatchers.Main) {
+            val view = previewView ?: return@withContext null
+            // Prefer getBitmap (no hang). captureStillImage only as fallback once.
+            val fromView = runCatching { view.bitmap }.getOrNull()
+                ?.takeIf { !it.isRecycled && it.width > 0 }
+            val src = fromView
+                ?: runCatching { view.captureStillImage() }.getOrNull()
+                    ?.takeIf { !it.isRecycled && it.width > 0 }
+            // Independent copy — TextureView may reuse the same buffer.
+            src?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
+        }
+
         if (raw == null) {
-            Log.e(TAG, "captureStill: no fresh frame")
+            Log.e(TAG, "captureStill: TextureView bitmap null")
             return null
         }
 
-        // Autocalibrar rotación una sola vez (cara detectada).
-        if (!CapturePrefs.isRotationCalibrated(activity)) {
-            val detected = withContext(kotlinx.coroutines.Dispatchers.Default) {
-                com.mlh.skinanalyzer.analysis.oem.OemFaceLandmarks.detectBestRotation(activity, raw)
-            }
-            CapturePrefs.setCaptureRotationDeg(activity, detected)
-        }
-
-        val deg = CapturePrefs.captureRotationDeg(activity)
+        // Fixed 90° — matches preview; ignore any stale SharedPreferences calibration.
+        val deg = CapturePrefs.DEFAULT_ROTATION_DEG
         val mirror = CapturePrefs.MIRROR_HORIZONTAL
         val oriented = CapturePrefs.transformBitmap(raw, deg, mirror)
         if (oriented !== raw) {
@@ -657,40 +663,7 @@ class Mj008UvcSession(
             "captureStill OK ${target.name} ${target.length()} bytes " +
                 "rot=$deg mirror=$mirror ${oriented.width}x${oriented.height}",
         )
-        // Portrait check: after 90/270, height should be > width for this sensor.
-        if (deg == 90 || deg == 270) {
-            if (oriented.height <= oriented.width) {
-                Log.e(
-                    TAG,
-                    "ROTATION FAILED? expected portrait after $deg° but got " +
-                        "${oriented.width}x${oriented.height}",
-                )
-            }
-        }
         return oriented
-    }
-
-    /**
-     * Descarta frames en vuelo (luz anterior) y toma uno nuevo.
-     * Copia el bitmap: TextureView puede reutilizar el mismo buffer.
-     */
-    private suspend fun grabFreshFrame(): Bitmap? {
-        val view = previewView ?: return null
-        // Dejar que el LED estabilice en el pipeline y pedir frames nuevos.
-        repeat(3) {
-            withContext(kotlinx.coroutines.Dispatchers.Main) {
-                runCatching { view.captureStillImage() }
-            }
-            kotlinx.coroutines.delay(50)
-        }
-        val fresh = withContext(kotlinx.coroutines.Dispatchers.Main) {
-            runCatching { view.captureStillImage() }.getOrNull()
-                ?.takeIf { !it.isRecycled && it.width > 0 }
-                ?: runCatching { view.bitmap }.getOrNull()
-                    ?.takeIf { !it.isRecycled && it.width > 0 }
-        }
-        // Copia independiente — evita 8 JPEG idénticos del mismo buffer.
-        return fresh?.copy(android.graphics.Bitmap.Config.ARGB_8888, false)
     }
 
     /**

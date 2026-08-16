@@ -36,15 +36,10 @@ object Mj008Hardware {
     const val PREVIEW_WIDTH = 1600
     const val PREVIEW_HEIGHT = 1200
     /**
-     * Engineering menu: Camera Rotation = 0 (with Screen Rotation 270 / Force USB front).
-     * Using 90 opened the Dual-USB secondary sideways; analyzer front cam is 0°.
-     */
-    /**
      * Preview orientation for [UVCCameraHandler.createHandler].
-     * OEM APK hardcodes **90**; this MJ-008 eng menu used Camera Rotation **0**.
-     * Keep 0 unless the live image appears rotated on device.
+     * Must match on-screen camera: **90°** (user-confirmed on tablet).
      */
-    const val PREVIEW_ORIENTATION = 0
+    const val PREVIEW_ORIENTATION = 90
 
     /**
      * USB camera product IDs seen on Moji / MJ-family analyzers.

@@ -32,9 +32,8 @@ object CapturePrefs {
     private fun prefs(ctx: Context): SharedPreferences =
         ctx.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
-    /** Ángulo actual (SharedPreferences o default 270). */
-    fun captureRotationDeg(ctx: Context): Int =
-        prefs(ctx).getInt(KEY_ROTATION, DEFAULT_ROTATION_DEG)
+    /** Ángulo para JPEG: siempre 90° (preview + archivo). Ignora prefs viejas (270). */
+    fun captureRotationDeg(@Suppress("UNUSED_PARAMETER") ctx: Context): Int = DEFAULT_ROTATION_DEG
 
     fun isRotationCalibrated(ctx: Context): Boolean =
         prefs(ctx).getBoolean(KEY_ROTATION_SET, false)
@@ -47,6 +46,14 @@ object CapturePrefs {
             .putBoolean(KEY_ROTATION_SET, true)
             .apply()
         Log.i(TAG, "Rotación guardada: $value")
+    }
+
+    /** Limpia calibración errónea (p.ej. 270°) de builds anteriores. */
+    fun clearRotationCalibration(ctx: Context) {
+        prefs(ctx).edit()
+            .remove(KEY_ROTATION)
+            .remove(KEY_ROTATION_SET)
+            .apply()
     }
 
     fun settleFirstMs(ctx: Context): Long = prefs(ctx).getLong(KEY_SETTLE_FIRST, DEFAULT_SETTLE_FIRST_MS)
