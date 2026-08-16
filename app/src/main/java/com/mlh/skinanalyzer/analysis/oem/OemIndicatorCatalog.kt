@@ -33,10 +33,13 @@ object OemIndicatorCatalog {
      * (matches landmark light used in OemSkinEngine).
      */
     fun baseCaptureFilename(oemType: String?): String = when (oemType) {
-        "skin_pigmentation", "skin_sensitivity" -> OemCaptureFiles.POSITIVE
-        "skin_blackhead", "skin_pore", "black_eye", "skin_spot",
-        "oily_gloss", "skin_acne", "skin_acne_scar",
-        -> OemCaptureFiles.NEGATIVE
+        "skin_pigmentation" -> OemCaptureFiles.WHITE
+        "skin_sensitivity" -> OemCaptureFiles.RED
+        "skin_blackhead", "skin_pore", "oily_gloss" -> OemCaptureFiles.POSITIVE
+        "skin_acne", "skin_acne_scar", "UV_acne" -> OemCaptureFiles.BLUE
+        "UV_spot", "skin_porphyrin" -> OemCaptureFiles.UV
+        "black_eye", "skin_wrinkle", "skin_spot" -> OemCaptureFiles.WHITE
+        "skin_acne_scar_xpl" -> OemCaptureFiles.NEGATIVE
         else -> OemCaptureFiles.WHITE
     }
 

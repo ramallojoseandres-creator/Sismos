@@ -8,20 +8,15 @@ import kotlin.math.min
 import kotlin.math.roundToInt
 
 enum class CareLevel(val value: Int, val label: String, val colorHex: String) {
-    L1(1, "Leve", "#2E9E6A"),
-    L2(2, "Leve a moderado", "#3A7BD5"),
-    L3(3, "Moderado", "#D4A017"),
-    L4(4, "Severo", "#E07A3D"),
-    L5(5, "Grave", "#C0392B");
+    MINIMO(1, "Mínimo", "#2E9E6A"),
+    LEVE(2, "Leve", "#7EB6D9"),
+    MODERADO(3, "Moderado", "#3A7BD5"),
+    GRAVE(4, "Grave", "#1A3A6B"),
+    URGENTE(5, "Urgente", "#6B2D8B");
 
     companion object {
-        fun fromScore(score: Float): CareLevel = when {
-            score < 20f -> L1
-            score < 40f -> L2
-            score < 60f -> L3
-            score < 80f -> L4
-            else -> L5
-        }
+        /** Compat: asume mayor = peor (métricas de daño). Preferir [Severidad.clasificar]. */
+        fun fromScore(score: Float): CareLevel = Severidad.clasificar(score, mayorEsPeor = true)
     }
 }
 
@@ -35,6 +30,12 @@ data class SkinMetric(
     val causes: String,
     val precautions: String,
     val recommendation: String,
+    /** true = score alto es malo (acné); false = score alto es bueno (humedad, colágeno). */
+    val higherIsWorse: Boolean = true,
+    /** Espectro de captura usado (trazabilidad en informe). */
+    val spectrumLabel: String = "",
+    /** Archivo de captura relativo a la sesión (p. ej. blue.jpg). */
+    val spectrumFile: String = "",
 )
 
 data class SkinAnalysisResult(

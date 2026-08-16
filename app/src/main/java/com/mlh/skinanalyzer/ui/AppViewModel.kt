@@ -622,37 +622,33 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         }
                         result = filterMetrics(gushangResult)
                         pathsOut = imagePaths
-                        // Mapas generados por skinHeatMap / skinThreeDImage
+                        // Mapas: heat/3D + overlays por hallazgo clave
                         val mapDir = File(sessionDir, "gushang")
                         val overlays = buildList {
-                            val heat = File(mapDir, "heatmap.jpg")
-                            if (heat.exists() && heat.length() > 0) {
-                                add(
-                                    OemIndicatorResult(
-                                        key = "heatmap",
-                                        oemType = "heat_map",
-                                        displayName = "Mapa de calor",
-                                        layer = "superficial",
-                                        score = 0,
-                                        levelLabel = "",
-                                        overlayPath = heat.absolutePath,
-                                    ),
-                                )
+                            fun addMap(key: String, oemType: String, name: String, layer: String, file: File) {
+                                if (file.exists() && file.length() > 0) {
+                                    add(
+                                        OemIndicatorResult(
+                                            key = key,
+                                            oemType = oemType,
+                                            displayName = name,
+                                            layer = layer,
+                                            score = gushangResult.metrics.firstOrNull { it.key == key }?.score?.toInt() ?: 0,
+                                            levelLabel = gushangResult.metrics.firstOrNull { it.key == key }?.level?.label.orEmpty(),
+                                            overlayPath = file.absolutePath,
+                                        ),
+                                    )
+                                }
                             }
-                            val three = File(mapDir, "three_d.jpg")
-                            if (three.exists() && three.length() > 0) {
-                                add(
-                                    OemIndicatorResult(
-                                        key = "three_d",
-                                        oemType = "three_d",
-                                        displayName = "Imagen 3D",
-                                        layer = "profunda",
-                                        score = 0,
-                                        levelLabel = "",
-                                        overlayPath = three.absolutePath,
-                                    ),
-                                )
-                            }
+                            addMap("heatmap", "heat_map", "Mapa de calor", "superficial", File(mapDir, "heatmap.jpg"))
+                            addMap("three_d", "three_d", "Imagen 3D", "profunda", File(mapDir, "three_d.jpg"))
+                            addMap("acne", "skin_acne", "Acné", "profunda", File(mapDir, "acne_out.jpg"))
+                            addMap("uv_spots", "UV_spot", "Manchas UV", "profunda", File(mapDir, "uv_spots_out.jpg"))
+                            addMap("blackheads", "skin_blackhead", "Puntos negros", "superficial", File(mapDir, "blackheads_out.jpg"))
+                            addMap("pores", "skin_pore", "Poros", "superficial", File(mapDir, "pores_out.jpg"))
+                            addMap("pigmentation", "skin_pigmentation", "Pigmentación", "superficial", File(mapDir, "pigmentation_out.jpg"))
+                            addMap("deep_pigment", "skin_pigmentation", "Pigmentación profunda", "profunda", File(mapDir, "deep_pigment_out.jpg"))
+                            addMap("porphyrin", "skin_porphyrin", "Porfirinas", "profunda", File(mapDir, "porphyrin_out.jpg"))
                         }
                         gushangMapOverlays = overlays
                     }
@@ -753,6 +749,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         )
         val pdf = ReportGenerator.writePdf(
             getApplication(), patient, filtered, moisture, time, profile, guides, products,
+            sessionDir = session?.sessionDir,
         )
         val htmlSession = session ?: AnalysisSession(
             patientId = patient.id,

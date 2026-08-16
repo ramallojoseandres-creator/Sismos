@@ -10,6 +10,9 @@ public class JniInterface {
 
     public static native float skinAcne(String str, String str2, byte[] bArr, int i, int i2);
 
+    /** Variante Profundo (presente en libSkinDetect.so). */
+    public static native float skinAcneLEC(String str, String str2, byte[] bArr, int i, int i2);
+
     public static native float skinAcneCuticle(String str, String str2, byte[] bArr, int i, int i2);
 
     public static native float skinAcneInflammation(String str, String str2, byte[] bArr, int i, int i2);
@@ -19,6 +22,8 @@ public class JniInterface {
     public static native float skinCuticle(String str, String str2, byte[] bArr, int i, int i2);
 
     public static native float skinElasticity(String str, String str2, byte[] bArr, int i, int i2);
+
+    public static native float skinElasticityLEC(String str, String str2, byte[] bArr, int i, int i2);
 
     public static native float skinExudates(String str, String str2, byte[] bArr, int i, int i2);
 
@@ -30,9 +35,13 @@ public class JniInterface {
 
     public static native float skinOilContent(String str, String str2, byte[] bArr, int i, int i2);
 
+    public static native float skinOilContentLEC(String str, String str2, byte[] bArr, int i, int i2);
+
     public static native float skinScars(String str, String str2, byte[] bArr, int i, int i2);
 
     public static native float skinSensitivity(String str, String str2, byte[] bArr, int i, int i2);
+
+    public static native float skinSensitivityLEC(String str, String str2, byte[] bArr, int i, int i2);
 
     public static native float skinSplotColor(String str, String str2, byte[] bArr, int i, int i2);
 

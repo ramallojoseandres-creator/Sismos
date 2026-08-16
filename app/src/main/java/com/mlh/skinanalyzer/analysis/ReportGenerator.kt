@@ -1,11 +1,14 @@
 package com.mlh.skinanalyzer.analysis
 
 import android.content.Context
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
+import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
+import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
 import com.mlh.skinanalyzer.data.CareGuide
 import com.mlh.skinanalyzer.data.ClinicProfile
 import com.mlh.skinanalyzer.data.Patient
@@ -55,10 +58,11 @@ object ReportGenerator {
         sb.appendLine(result.facialRatioNote)
         result.facial?.let { sb.appendLine(it.summary) }
         sb.appendLine()
-        sb.appendLine("INDICADORES (nivel 1–5; mayor = más atención)")
+        sb.appendLine("INDICADORES (Mínimo→Urgente; mayor atención = más prioridad)")
         result.metrics.forEach { m ->
             sb.appendLine(
-                "• ${m.name} [${m.layer}] — Nivel ${m.level.value} (${m.level.label}) · score ${m.score.round1()}"
+                "• ${m.name} [${m.layer}] — ${m.level.label} · score ${m.score.round1()}" +
+                    if (m.spectrumLabel.isNotBlank()) " · ${m.spectrumLabel}" else "",
             )
             sb.appendLine("  Base: ${m.description}")
             sb.appendLine("  Causas: ${m.causes}")
@@ -105,6 +109,7 @@ object ReportGenerator {
         clinic: ClinicProfile = ClinicProfile(),
         guides: List<CareGuide> = emptyList(),
         products: List<ProductRec> = emptyList(),
+        sessionDir: String? = null,
     ): File {
         val doc = PdfDocument()
         val pageWidth = 595
@@ -194,14 +199,62 @@ object ReportGenerator {
         y += 10f
         result.metrics.forEach { m ->
             newPageIfNeeded(70f)
-            drawWrapped("${m.name} — Nivel ${m.level.value} (${m.level.label})", titlePaint.apply {
-                textSize = 12f
-            })
+            drawWrapped(
+                "${m.name} — ${m.level.label} (${m.score.round1()})",
+                titlePaint.apply { textSize = 12f },
+            )
             titlePaint.textSize = 16f
+            if (m.spectrumLabel.isNotBlank()) {
+                drawWrapped("Espectro: ${m.spectrumLabel}", muted)
+            }
             drawWrapped(m.description, muted)
             drawWrapped("Recomendación: ${m.recommendation}", body)
             y += 8f
         }
+
+        if (!sessionDir.isNullOrBlank()) {
+            val findings = listOf(
+                Triple("acne", "Acné · Luz azul", OemCaptureFiles.BLUE),
+                Triple("uv_spots", "Manchas UV · Ultravioleta", OemCaptureFiles.UV),
+                Triple("blackheads", "Puntos negros · Polarizada paralela", OemCaptureFiles.POSITIVE),
+            )
+            var anyPhoto = false
+            findings.forEach { (key, caption, fileName) ->
+                val baseFile = File(sessionDir, fileName)
+                val overlayFile = File(sessionDir, "gushang/${key}_out.jpg")
+                val src = when {
+                    overlayFile.exists() && overlayFile.length() > 0 -> overlayFile
+                    baseFile.exists() && baseFile.length() > 0 -> baseFile
+                    else -> null
+                } ?: return@forEach
+                if (!anyPhoto) {
+                    y += 6f
+                    drawWrapped("Fotos de hallazgos", titlePaint.apply { textSize = 12f })
+                    titlePaint.textSize = 16f
+                    anyPhoto = true
+                }
+                val bmp = runCatching {
+                    BitmapFactory.decodeFile(
+                        src.absolutePath,
+                        BitmapFactory.Options().apply { inSampleSize = 2 },
+                    )
+                }.getOrNull() ?: return@forEach
+                try {
+                    val maxW = (pageWidth - 80).toFloat()
+                    val aspect = 1040f / 1350f
+                    val drawW = maxW
+                    val drawH = drawW / aspect
+                    newPageIfNeeded(drawH + 36f)
+                    drawWrapped(caption, body)
+                    val dst = RectF(40f, y, 40f + drawW, y + drawH)
+                    canvas.drawBitmap(bmp, null, dst, null)
+                    y += drawH + 12f
+                } finally {
+                    bmp.recycle()
+                }
+            }
+        }
+
         if (guides.isNotEmpty()) {
             y += 6f
             drawWrapped("Guías de cuidado (local)", titlePaint.apply { textSize = 12f })

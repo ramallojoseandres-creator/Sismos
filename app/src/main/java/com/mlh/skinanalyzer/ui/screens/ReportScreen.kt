@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -292,9 +293,10 @@ fun ReportScreen(
                             Image(
                                 bitmap = bmp.asImageBitmap(),
                                 contentDescription = name,
-                                contentScale = ContentScale.Crop,
+                                contentScale = ContentScale.Fit,
                                 modifier = Modifier
                                     .size(108.dp)
+                                    .aspectRatio(1040f / 1350f)
                                     .background(Ink),
                             )
                         } else {
@@ -362,6 +364,11 @@ fun ReportScreen(
                         }
                         Spacer(Modifier.height(8.dp))
                         Text(r.overview, style = MaterialTheme.typography.bodyLarge)
+                        Spacer(Modifier.height(10.dp))
+                        FindingPhotosSection(
+                            sessionDir = s.sessionDir,
+                            metrics = r.metrics,
+                        )
                         Spacer(Modifier.height(10.dp))
                         Text("Prioridades", style = MaterialTheme.typography.titleLarge)
                         Text(s.recommendations, style = MaterialTheme.typography.bodyMedium)
@@ -584,6 +591,7 @@ private fun OemMapViewer(
 /**
  * OEM-style wipe: finger left→right reveals indicator marks on the face;
  * right→left hides them back to the clean capture.
+ * ContentScale.Fit + aspectRatio captura real — cara completa, sin crop cejas–nariz.
  */
 @Composable
 private fun FaceRevealMap(
@@ -598,7 +606,7 @@ private fun FaceRevealMap(
     BoxWithConstraints(
         Modifier
             .fillMaxWidth()
-            .height(360.dp)
+            .aspectRatio(1040f / 1350f)
             .background(Ink)
             .border(1.dp, Ink.copy(alpha = 0.2f))
             .pointerInput(Unit) {
@@ -619,7 +627,7 @@ private fun FaceRevealMap(
             Image(
                 bitmap = base.asImageBitmap(),
                 contentDescription = "Foto base",
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
         }
@@ -627,7 +635,7 @@ private fun FaceRevealMap(
             Image(
                 bitmap = overlay.asImageBitmap(),
                 contentDescription = label,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier
                     .fillMaxSize()
                     .clip(clipReveal),
@@ -636,11 +644,10 @@ private fun FaceRevealMap(
             Image(
                 bitmap = overlay.asImageBitmap(),
                 contentDescription = label,
-                contentScale = ContentScale.Crop,
+                contentScale = ContentScale.Fit,
                 modifier = Modifier.fillMaxSize(),
             )
         }
-        // Wipe handle
         Box(
             Modifier
                 .fillMaxHeight()
@@ -666,6 +673,92 @@ private fun FaceRevealMap(
                 .background(Ink.copy(alpha = 0.45f), RoundedCornerShape(4.dp))
                 .padding(horizontal = 8.dp, vertical = 4.dp),
         )
+    }
+}
+
+@Composable
+private fun FindingPhotosSection(
+    sessionDir: String,
+    metrics: List<SkinMetric>,
+) {
+    if (sessionDir.isBlank()) return
+    val findings = listOf(
+        Triple("acne", "Acné", OemCaptureFiles.BLUE to "Luz azul"),
+        Triple("uv_spots", "Manchas UV", OemCaptureFiles.UV to "Ultravioleta"),
+        Triple("blackheads", "Puntos negros", OemCaptureFiles.POSITIVE to "Polarizada paralela"),
+    )
+    val available = findings.mapNotNull { (key, title, fileSpec) ->
+        val (fileName, spectrum) = fileSpec
+        val basePath = File(sessionDir, fileName).takeIf { it.exists() }?.absolutePath
+        val overlayPath = File(sessionDir, "gushang/${key}_out.jpg").takeIf { it.exists() }?.absolutePath
+        if (basePath == null && overlayPath == null) null
+        else FindingPhoto(key, title, spectrum, basePath, overlayPath)
+    }
+    if (available.isEmpty()) return
+    Text("Fotos de hallazgos", style = MaterialTheme.typography.titleLarge)
+    Spacer(Modifier.height(6.dp))
+    available.forEach { item ->
+        FindingPhotoCard(item = item, metrics = metrics)
+    }
+}
+
+private data class FindingPhoto(
+    val key: String,
+    val title: String,
+    val spectrum: String,
+    val basePath: String?,
+    val overlayPath: String?,
+)
+
+@Composable
+private fun FindingPhotoCard(
+    item: FindingPhoto,
+    metrics: List<SkinMetric>,
+) {
+    val metric = metrics.firstOrNull { it.key == item.key }
+    val baseBmp = remember(item.basePath) {
+        item.basePath?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() }
+    }
+    val overlayBmp = remember(item.overlayPath) {
+        item.overlayPath?.let { runCatching { BitmapFactory.decodeFile(it) }.getOrNull() }
+    }
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(vertical = 6.dp)
+            .background(Paper, RoundedCornerShape(4.dp))
+            .padding(8.dp),
+    ) {
+        Text(item.title, style = MaterialTheme.typography.titleLarge)
+        Text(
+            item.spectrum + (metric?.let { " · ${it.level.label} (${it.score.toInt()})" } ?: ""),
+            style = MaterialTheme.typography.bodyMedium,
+            color = Ink.copy(alpha = 0.55f),
+        )
+        Spacer(Modifier.height(6.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .aspectRatio(1040f / 1350f)
+                .background(Ink),
+        ) {
+            if (baseBmp != null) {
+                Image(
+                    bitmap = baseBmp.asImageBitmap(),
+                    contentDescription = item.title,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+            if (overlayBmp != null) {
+                Image(
+                    bitmap = overlayBmp.asImageBitmap(),
+                    contentDescription = "${item.title} overlay",
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
     }
 }
 
@@ -716,6 +809,13 @@ private fun MetricList(metrics: List<SkinMetric>) {
                     color = Color(android.graphics.Color.parseColor(m.level.colorHex)),
                 )
                 Text(m.description, style = MaterialTheme.typography.bodyMedium)
+                if (m.spectrumLabel.isNotBlank()) {
+                    Text(
+                        "Espectro: ${m.spectrumLabel}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Ink.copy(alpha = 0.55f),
+                    )
+                }
                 Text("Recomendación: ${m.recommendation}", style = MaterialTheme.typography.bodyMedium, color = Accent)
             }
         }

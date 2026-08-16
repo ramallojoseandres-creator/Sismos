@@ -46,13 +46,27 @@ class OemFaceLandmarks(context: Context) {
         val negativeY: FloatArray,
         val positiveX: FloatArray,
         val positiveY: FloatArray,
+        val blueX: FloatArray,
+        val blueY: FloatArray,
+        val redX: FloatArray,
+        val redY: FloatArray,
+        val uvX: FloatArray,
+        val uvY: FloatArray,
+        val wsgX: FloatArray,
+        val wsgY: FloatArray,
     )
 
     fun extract(sessionDir: String): LandmarkSet? {
         val lm = landmarker ?: return null
         val white = loadLandmarks(lm, File(sessionDir, OemCaptureFiles.WHITE)) ?: return null
-        val neg = loadLandmarks(lm, File(sessionDir, OemCaptureFiles.NEGATIVE)) ?: white
-        val pos = loadLandmarks(lm, File(sessionDir, OemCaptureFiles.POSITIVE)) ?: white
+        fun orWhite(file: String) =
+            loadLandmarks(lm, File(sessionDir, file)) ?: white
+        val neg = orWhite(OemCaptureFiles.NEGATIVE)
+        val pos = orWhite(OemCaptureFiles.POSITIVE)
+        val blue = orWhite(OemCaptureFiles.BLUE)
+        val red = orWhite(OemCaptureFiles.RED)
+        val uv = orWhite(OemCaptureFiles.UV)
+        val wsg = orWhite(OemCaptureFiles.WSG)
         return LandmarkSet(
             whiteX = white.first,
             whiteY = white.second,
@@ -60,6 +74,14 @@ class OemFaceLandmarks(context: Context) {
             negativeY = neg.second,
             positiveX = pos.first,
             positiveY = pos.second,
+            blueX = blue.first,
+            blueY = blue.second,
+            redX = red.first,
+            redY = red.second,
+            uvX = uv.first,
+            uvY = uv.second,
+            wsgX = wsg.first,
+            wsgY = wsg.second,
         )
     }
 
