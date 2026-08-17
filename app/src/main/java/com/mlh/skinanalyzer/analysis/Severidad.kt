@@ -18,7 +18,9 @@ object Severidad {
         "sebum" to CortesSeveridad(80f, 60f, 40f, 20f),
         "pigmentation" to CortesSeveridad(400f, 250f, 120f, 40f),
         "pores" to CortesSeveridad(200f, 140f, 80f, 30f),
-        "wrinkles" to CortesSeveridad(50f, 35f, 20f, 8f),
+        // "Arrugas" usa skinElasticity como proxy (no hay skinWrinkles en el SDK):
+        // elasticidad ALTA = piel lisa = BUENO → misma escala que collagen/moisture.
+        "wrinkles" to CortesSeveridad(20f, 35f, 50f, 70f, mayorEsPeor = false),
         "scars" to CortesSeveridad(20f, 12f, 6f, 2f),
         "dark_circles" to CortesSeveridad(20f, 35f, 50f, 70f, mayorEsPeor = false),
         "blackheads" to CortesSeveridad(30f, 20f, 12f, 5f),

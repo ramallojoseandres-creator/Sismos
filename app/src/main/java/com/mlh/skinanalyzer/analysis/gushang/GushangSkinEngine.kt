@@ -108,8 +108,11 @@ class GushangSkinEngine(context: Context) {
                 val out = File(outDir, "${key}_out.jpg").absolutePath
                 val score = callJni(key, primary, fallback, src.absolutePath, out, bytes, w, h)
                 if (score < 0f) return
-                val s = score.coerceIn(0f, 100f)
-                val level = Severidad.clasificar(s, mayorEsPeor)
+                // No recortar a 0-100: varios parámetros (pigmentación, poros, manchas UV,
+                // porfirinas) tienen escala real por encima de 100 — Severidad.CORTES ya
+                // trae los cortes calibrados por parámetro. Recortar aquí destruía la señal.
+                val s = score.coerceAtLeast(0f)
+                val level = Severidad.clasificar(key, s)
                 metrics += SkinMetric(
                     key = key,
                     name = name,
@@ -233,8 +236,11 @@ class GushangSkinEngine(context: Context) {
             }
 
             if (metrics.isEmpty()) return null
+            // Prioridad por severidad real (CareLevel.value: 1=Mínimo…5=Urgente), no por
+            // score crudo — con score crudo, una Humedad o Colágeno muy ALTOS (buenos)
+            // salían como "prioridad" solo por tener un número grande.
             val priority = metrics
-                .sortedByDescending { Severidad.attentionScore(it.score, it.higherIsWorse) }
+                .sortedByDescending { it.level.value }
                 .take(3)
                 .map { it.key }
             SkinAnalysisResult(
@@ -242,7 +248,7 @@ class GushangSkinEngine(context: Context) {
                 skinType = inferType(metrics),
                 skinAge = patientAge.coerceIn(18, 75),
                 overview = "Prioridades: " +
-                    metrics.sortedByDescending { Severidad.attentionScore(it.score, it.higherIsWorse) }
+                    metrics.sortedByDescending { it.level.value }
                         .take(3)
                         .joinToString { "${it.name} (${it.level.label}, ${it.score.toInt()})" },
                 facialRatioNote = "Landmarks MediaPipe → SkinDetect licenciado (15 parámetros).",

@@ -8,7 +8,7 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.pdf.PdfDocument
-import com.mlh.skinanalyzer.analysis.oem.OemCaptureFiles
+import android.util.Log
 import com.mlh.skinanalyzer.data.CareGuide
 import com.mlh.skinanalyzer.data.ClinicProfile
 import com.mlh.skinanalyzer.data.Patient
@@ -213,65 +213,107 @@ object ReportGenerator {
         }
 
         if (!sessionDir.isNullOrBlank()) {
-            val findings = listOf(
-                Triple("acne", "Acné · Luz azul", OemCaptureFiles.BLUE),
-                Triple("uv_spots", "Manchas UV · Ultravioleta", OemCaptureFiles.UV),
-                Triple("blackheads", "Puntos negros · Polarizada paralela", OemCaptureFiles.POSITIVE),
-            )
-            var anyPhoto = false
-            findings.forEach { (key, caption, fileName) ->
-                val baseFile = File(sessionDir, fileName)
+            // 6 fotos con overlay, 2 filas × 3 columnas, en una sola página.
+            val fotoKeys = listOf("acne", "uv_spots", "blackheads", "pigmentation", "deep_pigment", "sensitivity")
+            data class FotoLista(val bmp: android.graphics.Bitmap, val caption: String)
+            val fotos = fotoKeys.mapNotNull { key ->
+                val m = result.metrics.firstOrNull { it.key == key } ?: return@mapNotNull null
+                val baseFile = File(sessionDir, m.spectrumFile)
                 val overlayFile = File(sessionDir, "gushang/${key}_out.jpg")
                 val src = when {
                     overlayFile.exists() && overlayFile.length() > 0 -> overlayFile
                     baseFile.exists() && baseFile.length() > 0 -> baseFile
-                    else -> null
-                } ?: return@forEach
-                if (!anyPhoto) {
-                    y += 6f
-                    drawWrapped("Fotos de hallazgos", titlePaint.apply { textSize = 12f })
-                    titlePaint.textSize = 16f
-                    anyPhoto = true
+                    else -> return@mapNotNull null
                 }
                 val bmp = runCatching {
                     BitmapFactory.decodeFile(
                         src.absolutePath,
                         BitmapFactory.Options().apply { inSampleSize = 2 },
                     )
-                }.getOrNull() ?: return@forEach
+                }.getOrNull() ?: return@mapNotNull null
+                FotoLista(bmp, "${m.name} · ${m.spectrumLabel}")
+            }
+            if (fotos.isNotEmpty()) {
                 try {
-                    val maxW = (pageWidth - 80).toFloat()
-                    val aspect = 1040f / 1350f
-                    val drawW = maxW
-                    val drawH = drawW / aspect
-                    newPageIfNeeded(drawH + 36f)
-                    drawWrapped(caption, body)
-                    val dst = RectF(40f, y, 40f + drawW, y + drawH)
-                    canvas.drawBitmap(bmp, null, dst, null)
-                    y += drawH + 12f
-                } finally {
-                    bmp.recycle()
+                    doc.finishPage(page)
+                    pageNumber++
+                    pageInfo = PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create()
+                    page = doc.startPage(pageInfo)
+                    canvas = page.canvas
+                    y = 48f
+                    drawDemoWatermark(canvas, pageWidth, pageHeight, result.isClinicalLicensed)
+                    drawWrapped("Fotos de hallazgos", titlePaint.apply { textSize = 12f })
+                    titlePaint.textSize = 16f
+                    y += 4f
+
+                    val cols = 3
+                    val filas = 2
+                    val margen = 40f
+                    val gap = 14f
+                    val aspecto = 1040f / 1350f
+                    val anchoCelda = (pageWidth - margen * 2 - gap * (cols - 1)) / cols
+                    val altoFoto = anchoCelda / aspecto
+                    val altoCelda = altoFoto + 22f // espacio para el pie de foto
+
+                    val captionPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                        color = Color.rgb(70, 70, 70)
+                        textSize = 8f
+                        textAlign = Paint.Align.CENTER
+                    }
+
+                    fotos.forEachIndexed { i, foto ->
+                        val fila = i / cols
+                        val col = i % cols
+                        val x = margen + col * (anchoCelda + gap)
+                        val cellY = y + fila * (altoCelda + gap)
+                        try {
+                            val dst = RectF(x, cellY, x + anchoCelda, cellY + altoFoto)
+                            canvas.drawBitmap(foto.bmp, null, dst, null)
+                            canvas.drawText(
+                                foto.caption,
+                                x + anchoCelda / 2f,
+                                cellY + altoFoto + 12f,
+                                captionPaint,
+                            )
+                        } finally {
+                            foto.bmp.recycle()
+                        }
+                    }
+                    y += filas * (altoCelda + gap) + 10f
+                } catch (e: Exception) {
+                    Log.e("ReportGenerator", "grid de fotos falló", e)
                 }
             }
         }
 
-        if (guides.isNotEmpty()) {
-            y += 6f
-            drawWrapped("Guías de cuidado (local)", titlePaint.apply { textSize = 12f })
-            titlePaint.textSize = 16f
-            guides.forEach { g ->
-                drawWrapped("${g.title}: ${g.body}", muted)
-            }
-        }
-        if (products.isNotEmpty()) {
-            y += 6f
-            drawWrapped("Productos sugeridos (local)", titlePaint.apply { textSize = 12f })
-            titlePaint.textSize = 16f
-            products.forEach { p ->
-                drawWrapped("${p.name} — ${p.description}", body)
-            }
-        }
+        // Récipe en blanco — el tratamiento queda a criterio médico, la app no lo sugiere.
+        newPageIfNeeded(260f)
         y += 10f
+        drawWrapped("Récipe / Tratamiento indicado", titlePaint.apply { textSize = 14f })
+        titlePaint.textSize = 16f
+        y += 4f
+        drawWrapped(
+            "Paciente: ${patient.fullName}     Fecha: ${
+                SimpleDateFormat("dd/MM/yyyy", Locale("es", "ES")).format(Date(sessionTime))
+            }",
+            muted,
+        )
+        y += 10f
+        val lineaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            color = Color.rgb(190, 190, 190)
+            strokeWidth = 1f
+        }
+        repeat(10) {
+            y += 26f
+            canvas.drawLine(40f, y, pageWidth - 40f, y, lineaPaint)
+        }
+        y += 36f
+        canvas.drawLine(40f, y, 40f + 220f, y, lineaPaint)
+        canvas.drawText(clinic.doctorName, 40f, y + 14f, muted)
+        if (clinic.specialty.isNotBlank()) canvas.drawText(clinic.specialty, 40f, y + 27f, muted)
+        canvas.drawText("Firma y sello", pageWidth - 40f - 100f, y + 14f, muted)
+
+        y += 45f
         drawWrapped(clinic.footerNote, muted)
         doc.finishPage(page)
 
