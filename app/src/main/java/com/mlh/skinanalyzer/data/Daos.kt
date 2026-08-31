@@ -74,6 +74,9 @@ interface SessionDao {
     @Query("SELECT * FROM analysis_sessions ORDER BY createdAt DESC LIMIT 40")
     fun observeRecent(): Flow<List<AnalysisSession>>
 
+    @Query("SELECT * FROM analysis_sessions ORDER BY createdAt DESC LIMIT 40")
+    suspend fun listRecent(): List<AnalysisSession>
+
     @Query("SELECT COUNT(*) FROM analysis_sessions WHERE patientId = :patientId")
     suspend fun countForPatient(patientId: Long): Int
 

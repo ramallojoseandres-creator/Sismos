@@ -4,6 +4,7 @@ import android.content.Context
 import com.mlh.skinanalyzer.data.AnalysisSession
 import com.mlh.skinanalyzer.data.ClinicProfile
 import com.mlh.skinanalyzer.data.Patient
+import com.mlh.skinanalyzer.wifi.EditableRecommendations
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -28,6 +29,17 @@ object HtmlReportExporter {
         val watermark = if (!result.isClinicalLicensed) {
             """<div class="wm">SIMULACIÓN — NO CLÍNICO</div>"""
         } else ""
+        val doctorNotes = EditableRecommendations.parse(session.editableRecommendations)
+        val recBlock = if (!doctorNotes.isBlank()) {
+            doctorNotes.displayText().lines().joinToString("<br/>") { esc(it) }
+        } else {
+            esc(session.recommendations)
+        }
+        val recTitle = if (!doctorNotes.isBlank()) {
+            "Tratamiento indicado por la médico"
+        } else {
+            "Recomendaciones automáticas (referencia IA)"
+        }
         val priorities = result.metrics.sortedByDescending { it.score }.take(3).joinToString("") { m ->
             "<li><strong>${esc(m.name)}</strong> — nivel ${m.level.value} (${esc(m.level.label)}): ${esc(m.recommendation)}</li>"
         }
@@ -73,8 +85,8 @@ object HtmlReportExporter {
             $surface
             <h2>Profundo</h2>
             $deep
-            <h2>Recomendaciones</h2>
-            <p>${esc(session.editableRecommendations.ifBlank { session.recommendations })}</p>
+            <h2>$recTitle</h2>
+            <p>$recBlock</p>
             <div class="footer">
               Análisis cosmético de piel. No constituye diagnóstico médico. Cualquier lesión sospechosa
               requiere evaluación dermatológica presencial.<br/>

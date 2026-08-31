@@ -13,6 +13,7 @@ import com.mlh.skinanalyzer.data.CareGuide
 import com.mlh.skinanalyzer.data.ClinicProfile
 import com.mlh.skinanalyzer.data.Patient
 import com.mlh.skinanalyzer.data.ProductRec
+import com.mlh.skinanalyzer.wifi.EditableRecommendations
 import java.io.File
 import java.io.FileOutputStream
 import java.text.SimpleDateFormat
@@ -29,6 +30,7 @@ object ReportGenerator {
         clinic: ClinicProfile = ClinicProfile(),
         guides: List<CareGuide> = emptyList(),
         products: List<ProductRec> = emptyList(),
+        editableRecommendations: String = "",
     ): String {
         val df = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale("es", "ES"))
         val sb = StringBuilder()
@@ -85,6 +87,12 @@ object ReportGenerator {
             }
             sb.appendLine()
         }
+        val doctorNotes = EditableRecommendations.parse(editableRecommendations)
+        if (!doctorNotes.isBlank()) {
+            sb.appendLine("TRATAMIENTO INDICADO POR LA MÉDICO")
+            doctorNotes.displayText().lines().forEach { sb.appendLine(it) }
+            sb.appendLine()
+        }
         sb.appendLine(clinic.footerNote)
         if (clinic.phone.isNotBlank() || clinic.whatsapp.isNotBlank() || clinic.email.isNotBlank()) {
             sb.appendLine(
@@ -110,6 +118,7 @@ object ReportGenerator {
         guides: List<CareGuide> = emptyList(),
         products: List<ProductRec> = emptyList(),
         sessionDir: String? = null,
+        editableRecommendations: String = "",
     ): File {
         val doc = PdfDocument()
         val pageWidth = 595
@@ -286,7 +295,7 @@ object ReportGenerator {
             }
         }
 
-        // Récipe en blanco — el tratamiento queda a criterio médico, la app no lo sugiere.
+        // Récipe / tratamiento — lo completa la médico (PC o tablet).
         newPageIfNeeded(260f)
         y += 10f
         drawWrapped("Récipe / Tratamiento indicado", titlePaint.apply { textSize = 14f })
@@ -299,15 +308,46 @@ object ReportGenerator {
             muted,
         )
         y += 10f
+        val doctorNotes = EditableRecommendations.parse(editableRecommendations)
+        if (!doctorNotes.isBlank()) {
+            if (doctorNotes.medicamentos.isNotBlank()) {
+                drawWrapped("Medicamentos / tratamiento farmacológico", titlePaint.apply { textSize = 11f })
+                titlePaint.textSize = 16f
+                doctorNotes.medicamentos.lines().forEach { line ->
+                    if (line.isNotBlank()) drawWrapped("• $line", body)
+                }
+                y += 6f
+            }
+            if (doctorNotes.rutinas.isNotBlank()) {
+                drawWrapped("Rutinas y cuidados", titlePaint.apply { textSize = 11f })
+                titlePaint.textSize = 16f
+                doctorNotes.rutinas.lines().forEach { line ->
+                    if (line.isNotBlank()) drawWrapped("• $line", body)
+                }
+                y += 6f
+            }
+            if (doctorNotes.observaciones.isNotBlank()) {
+                drawWrapped("Observaciones", titlePaint.apply { textSize = 11f })
+                titlePaint.textSize = 16f
+                doctorNotes.observaciones.lines().forEach { line ->
+                    if (line.isNotBlank()) drawWrapped(line, body)
+                }
+            }
+        } else {
+            val lineaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.rgb(190, 190, 190)
+                strokeWidth = 1f
+            }
+            repeat(10) {
+                y += 26f
+                canvas.drawLine(40f, y, pageWidth - 40f, y, lineaPaint)
+            }
+        }
+        y += 36f
         val lineaPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = Color.rgb(190, 190, 190)
             strokeWidth = 1f
         }
-        repeat(10) {
-            y += 26f
-            canvas.drawLine(40f, y, pageWidth - 40f, y, lineaPaint)
-        }
-        y += 36f
         canvas.drawLine(40f, y, 40f + 220f, y, lineaPaint)
         canvas.drawText(clinic.doctorName, 40f, y + 14f, muted)
         if (clinic.specialty.isNotBlank()) canvas.drawText(clinic.specialty, 40f, y + 27f, muted)

@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.GenericShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.outlined.Computer
 import androidx.compose.material.icons.outlined.Email
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.Button
@@ -43,6 +44,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -62,6 +64,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import com.google.gson.Gson
 import com.mlh.skinanalyzer.analysis.SkinAnalysisResult
@@ -77,6 +80,8 @@ import com.mlh.skinanalyzer.ui.theme.Accent
 import com.mlh.skinanalyzer.ui.theme.Cream
 import com.mlh.skinanalyzer.ui.theme.Ink
 import com.mlh.skinanalyzer.ui.theme.Paper
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -91,8 +96,10 @@ fun ReportScreen(
     sessionId: Long,
     vm: AppViewModel,
     onBack: () -> Unit,
+    onEditOnPc: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val scope = rememberCoroutineScope()
     var session by remember { mutableStateOf<AnalysisSession?>(null) }
     var patient by remember { mutableStateOf<Patient?>(null) }
@@ -105,11 +112,10 @@ fun ReportScreen(
     var selectedMapIndex by remember { mutableIntStateOf(0) }
     var loadFailed by remember { mutableStateOf(false) }
 
-    LaunchedEffect(sessionId) {
-        val s = vm.getSession(sessionId)
-        if (s == null) {
+    suspend fun reloadSession() {
+        val s = vm.getSession(sessionId) ?: run {
             loadFailed = true
-            return@LaunchedEffect
+            return
         }
         session = s
         patient = vm.getPatient(s.patientId)
@@ -118,7 +124,7 @@ fun ReportScreen(
         }.getOrNull() ?: vm.lastResult
         if (patient == null || result == null) {
             loadFailed = true
-            return@LaunchedEffect
+            return
         }
         images = runCatching {
             val type = object : com.google.gson.reflect.TypeToken<Map<String, String>>() {}.type
@@ -128,15 +134,28 @@ fun ReportScreen(
             val type = object : com.google.gson.reflect.TypeToken<List<OemIndicatorResult>>() {}.type
             Gson().fromJson<List<OemIndicatorResult>>(s.oemIndicatorsJson, type) ?: emptyList()
         }.getOrDefault(emptyList())
-        // Prefer Mapas tab when OEM overlays exist (OEM-like consult flow).
-        if (oemIndicators.any { !it.overlayPath.isNullOrBlank() }) {
-            tab = 4
-        }
         val keys = result?.priorityKeys.orEmpty().ifEmpty {
             result?.metrics?.sortedByDescending { it.score }?.take(3)?.map { it.key }.orEmpty()
         }
         guides = vm.guidesFor(keys)
         products = vm.productsFor(keys)
+        if (oemIndicators.any { !it.overlayPath.isNullOrBlank() }) {
+            tab = 4
+        }
+    }
+
+    LaunchedEffect(sessionId) {
+        reloadSession()
+    }
+
+    DisposableEffect(lifecycleOwner, sessionId) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                scope.launch { reloadSession() }
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
     val p = patient
@@ -253,6 +272,24 @@ fun ReportScreen(
                 Spacer(Modifier.width(4.dp))
                 Text("WhatsApp")
             }
+        }
+        Spacer(Modifier.height(8.dp))
+        OutlinedButton(
+            onClick = onEditOnPc,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(4.dp),
+        ) {
+            Icon(Icons.Outlined.Computer, null)
+            Spacer(Modifier.width(4.dp))
+            Text("Editar medicamentos y rutinas en PC (WiFi)")
+        }
+        if (s.editableRecommendations.isNotBlank()) {
+            Text(
+                "Tiene recomendaciones médicas guardadas desde el PC.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = Accent,
+                modifier = Modifier.padding(top = 6.dp),
+            )
         }
 
         Spacer(Modifier.height(10.dp))

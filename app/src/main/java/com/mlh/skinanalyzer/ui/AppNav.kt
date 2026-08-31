@@ -44,6 +44,7 @@ import com.mlh.skinanalyzer.ui.screens.SessionListScreen
 import com.mlh.skinanalyzer.ui.screens.SettingsHubScreen
 import com.mlh.skinanalyzer.ui.screens.WelcomeScreen
 import com.mlh.skinanalyzer.ui.screens.WifiImportScreen
+import com.mlh.skinanalyzer.ui.screens.WifiReportsScreen
 import com.mlh.skinanalyzer.ui.screens.openManageAllFilesIntent
 import kotlinx.coroutines.launch
 
@@ -54,6 +55,7 @@ object Routes {
     const val PATIENTS = "patients"
     const val PATIENT_FORM = "patient_form?id={id}"
     const val WIFI_IMPORT = "wifi_import"
+    const val WIFI_REPORTS = "wifi_reports?sessionId={sessionId}"
     const val CAPTURE = "capture/{patientId}"
     const val REPORT = "report/{sessionId}"
     const val SESSIONS = "sessions/{patientId}"
@@ -201,6 +203,17 @@ fun AppNav(vm: AppViewModel = viewModel()) {
             composable(Routes.WIFI_IMPORT) {
                 WifiImportScreen(vm = vm, onBack = { nav.popBackStack() })
             }
+            composable(
+                route = Routes.WIFI_REPORTS,
+                arguments = listOf(navArgument("sessionId") { type = NavType.LongType; defaultValue = -1L }),
+            ) { entry ->
+                val sessionId = entry.arguments?.getLong("sessionId") ?: -1L
+                WifiReportsScreen(
+                    vm = vm,
+                    highlightSessionId = sessionId.takeIf { it > 0L },
+                    onBack = { nav.popBackStack() },
+                )
+            }
             composable(Routes.PATIENTS) {
                 PatientsScreen(
                     rows = vm.patientRows,
@@ -277,6 +290,7 @@ fun AppNav(vm: AppViewModel = viewModel()) {
                     sessionId = sessionId,
                     vm = vm,
                     onBack = { nav.popBackStack() },
+                    onEditOnPc = { nav.navigate("wifi_reports?sessionId=$sessionId") },
                 )
             }
             composable(

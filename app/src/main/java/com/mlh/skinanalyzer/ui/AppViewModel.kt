@@ -41,7 +41,12 @@ import com.mlh.skinanalyzer.hardware.Mj008LightController
 import com.mlh.skinanalyzer.hardware.Mj008UvcSession
 import com.mlh.skinanalyzer.ui.screens.PatientListRow
 import com.mlh.skinanalyzer.ui.screens.WifiImportPreview
+import com.mlh.skinanalyzer.wifi.EditableRecommendations
 import com.mlh.skinanalyzer.wifi.PatientWifiServer
+import com.mlh.skinanalyzer.wifi.ReportWifiServer
+import com.mlh.skinanalyzer.wifi.WifiMetricSummary
+import com.mlh.skinanalyzer.wifi.WifiReportDetail
+import com.mlh.skinanalyzer.wifi.WifiReportSummary
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.collectLatest
@@ -125,6 +130,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var wifiUrl by mutableStateOf<String?>(null)
         private set
     var wifiServerError by mutableStateOf<String?>(null)
+        private set
+
+    private var wifiReportsServer: ReportWifiServer? = null
+    var wifiReportsPin by mutableStateOf<String?>(null)
+        private set
+    var wifiReportsUrl by mutableStateOf<String?>(null)
+        private set
+    var wifiReportsServerError by mutableStateOf<String?>(null)
         private set
 
     fun clearUserMessage() {
@@ -462,6 +475,116 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         wifiServerError = null
     }
 
+    fun startWifiReportsSession() {
+        stopWifiReportsSession()
+        val pin = PatientWifiServer.generatePin()
+        wifiReportsPin = pin
+        val ip = PatientWifiServer.wifiIpv4(getApplication())
+        if (ip == null) {
+            wifiReportsUrl = null
+            wifiReportsServerError = "Conecta la tablet a una red WiFi"
+            return
+        }
+        wifiReportsUrl = "http://$ip:${ReportWifiServer.PORT}"
+        val server = ReportWifiServer(
+            context = getApplication(),
+            pin = pin,
+            listReports = { listReportsForWifi() },
+            getReport = { id -> loadReportForWifi(id) },
+            saveRecommendations = { id, editable -> saveEditableRecommendations(id, editable) },
+            generateHtml = { id -> generateReportFileForWifi(id, html = true) },
+            generatePdf = { id -> generateReportFileForWifi(id, html = false) },
+        )
+        wifiReportsServer = server
+        if (!server.startSafe()) {
+            wifiReportsServerError = server.lastError ?: "No se pudo abrir el puerto ${ReportWifiServer.PORT}"
+            wifiReportsServer = null
+        } else {
+            wifiReportsServerError = null
+        }
+    }
+
+    fun stopWifiReportsSession() {
+        wifiReportsServer?.stopSafe()
+        wifiReportsServer = null
+        wifiReportsPin = null
+        wifiReportsUrl = null
+        wifiReportsServerError = null
+    }
+
+    private suspend fun listReportsForWifi(): List<WifiReportSummary> {
+        val sessions = sessionsDao.listRecent()
+        return sessions.mapNotNull { session ->
+            val patient = patientsDao.getById(session.patientId) ?: return@mapNotNull null
+            WifiReportSummary(
+                id = session.id,
+                patientName = patient.displayName,
+                createdAt = session.createdAt,
+                skinAge = session.skinAge,
+                skinType = session.skinType,
+                hasDoctorNotes = session.editableRecommendations.isNotBlank(),
+            )
+        }
+    }
+
+    private suspend fun loadReportForWifi(sessionId: Long): WifiReportDetail? {
+        val session = sessionsDao.getById(sessionId) ?: return null
+        val patient = patientsDao.getById(session.patientId) ?: return null
+        val result = runCatching {
+            gson.fromJson(session.metricsJson, SkinAnalysisResult::class.java)
+        }.getOrNull() ?: return null
+        val filtered = filterMetrics(result)
+        val editable = EditableRecommendations.parse(session.editableRecommendations)
+        return WifiReportDetail(
+            id = session.id,
+            patientName = patient.displayName,
+            patientSex = patient.sexLabel,
+            patientAge = session.ageAtAnalysis.takeIf { it > 0 } ?: patient.ageAt(session.createdAt),
+            createdAt = session.createdAt,
+            skinAge = session.skinAge,
+            skinType = filtered.skinType,
+            overview = filtered.overview,
+            analysisEngine = filtered.analysisEngine,
+            isClinicalLicensed = filtered.isClinicalLicensed,
+            aiRecommendations = session.recommendations,
+            medicamentos = editable.medicamentos,
+            rutinas = editable.rutinas,
+            observaciones = editable.observaciones,
+            metrics = filtered.metrics.map { m ->
+                WifiMetricSummary(
+                    name = m.name,
+                    layer = m.layer,
+                    score = m.score,
+                    levelLabel = m.level.label,
+                    levelValue = m.level.value,
+                    recommendation = m.recommendation,
+                )
+            },
+        )
+    }
+
+    suspend fun saveEditableRecommendations(sessionId: Long, editable: EditableRecommendations): Boolean {
+        if (sessionsDao.getById(sessionId) == null) return false
+        sessionsDao.updateEditableRecommendations(sessionId, editable.toStorageText())
+        return true
+    }
+
+    private suspend fun generateReportFileForWifi(sessionId: Long, html: Boolean): File? {
+        val session = sessionsDao.getById(sessionId) ?: return null
+        val patient = patientsDao.getById(session.patientId) ?: return null
+        val result = runCatching {
+            gson.fromJson(session.metricsJson, SkinAnalysisResult::class.java)
+        }.getOrNull() ?: return null
+        val (_, pdf, htmlFile) = buildSharePayload(
+            patient = patient,
+            result = result,
+            moisture = session.moisturePercent,
+            time = session.createdAt,
+            session = session,
+        )
+        return if (html) htmlFile else pdf
+    }
+
     fun observePendingImports(): Flow<List<PendingPatientImport>> = pendingImportDao.observeAll()
 
     fun previewPendingImports(items: List<PendingPatientImport>): List<WifiImportPreview> {
@@ -794,10 +917,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val filtered = filterMetrics(result)
         val text = ReportGenerator.buildTextReport(
             patient, filtered, moisture, time, profile, guides, products,
+            editableRecommendations = session?.editableRecommendations.orEmpty(),
         )
         val pdf = ReportGenerator.writePdf(
             getApplication(), patient, filtered, moisture, time, profile, guides, products,
             sessionDir = session?.sessionDir,
+            editableRecommendations = session?.editableRecommendations.orEmpty(),
         )
         val htmlSession = session ?: AnalysisSession(
             patientId = patient.id,
