@@ -8,12 +8,21 @@ android {
     namespace = "com.mlh.skinanalyzer"
     compileSdk = 34
 
+    signingConfigs {
+        create("mlhDebug") {
+            storeFile = file("../keystore/mlh-debug.jks")
+            storePassword = "mlhdebug2026"
+            keyAlias = "mlh_debug"
+            keyPassword = "mlhdebug2026"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.mlh.skinanalyzer"
         minSdk = 26
         targetSdk = 28
-        versionCode = 46
-        versionName = "1.9.0"
+        versionCode = 47
+        versionName = "1.9.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         ndk {
             // OEM MJ-008 ships both; tablet may be 32-bit primary ABI.
@@ -25,7 +34,11 @@ android {
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("mlhDebug")
+        }
         release {
+            signingConfig = signingConfigs.getByName("mlhDebug")
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
