@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1"/>
+<title>Informes — MLH Skin Analyzer</title>
+<style>
+  :root { --ink:#1a1a1a; --accent:#8b3a3a; --bg:#f7f3ee; --card:#fff; --muted:#666; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, system-ui, sans-serif; margin: 0; padding: 16px;
+    background: var(--bg); color: var(--ink); max-width: 960px; margin-inline: auto; }
+  h1 { font-size: 1.35rem; margin: 0 0 8px; }
+  h2 { font-size: 1.05rem; margin: 0 0 10px; }
+  .hint { color: var(--muted); font-size: 0.9rem; margin-bottom: 16px; line-height: 1.4; }
+  label { display: block; font-size: 0.8rem; color: #555; margin: 10px 0 4px; font-weight: 600; }
+  input, textarea { width: 100%; padding: 12px; font-size: 1rem;
+    border: 1px solid #ccc; border-radius: 6px; background: #fff; font-family: inherit; }
+  textarea { min-height: 120px; line-height: 1.45; }
+  textarea.readonly { background: #f3f3f3; color: #444; }
+  button { padding: 12px 16px; margin-top: 10px; font-size: 0.95rem;
+    border: 0; border-radius: 6px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #444; }
+  button.ghost { background: #ddd; color: #222; }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .card { background: var(--card); border-radius: 8px; padding: 14px; margin-bottom: 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06); }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; }
+  .row > button { flex: 1; min-width: 140px; }
+  .list-item { display: flex; justify-content: space-between; align-items: center;
+    gap: 8px; padding: 12px 0; border-bottom: 1px solid #eee; cursor: pointer; }
+  .list-item:last-child { border-bottom: 0; }
+  .list-item:hover { background: #faf8f5; margin: 0 -8px; padding-inline: 8px; border-radius: 6px; }
+  .badge { font-size: 0.75rem; background: #efe6e6; color: var(--accent); padding: 2px 8px; border-radius: 99px; }
+  .err { color: #b71c1c; font-size: 0.9rem; margin-top: 8px; }
+  .ok { color: #2e7d32; font-size: 0.9rem; margin-top: 8px; }
+  .pin-box { font-size: 1.1rem; letter-spacing: 0.2em; font-weight: 700; max-width: 160px; }
+  .metric { padding: 8px 0; border-bottom: 1px solid #f0f0f0; font-size: 0.9rem; }
+  .metric strong { color: var(--accent); }
+  .metric .meta { color: var(--muted); font-size: 0.82rem; }
+  .hidden { display: none !important; }
+  .toolbar { position: sticky; top: 0; z-index: 2; background: var(--bg); padding-bottom: 8px; }
+  @media print {
+    .toolbar, #listCard, #pinCard { display: none; }
+    textarea { border: none; min-height: auto; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <h1>Informes de piel</h1>
+    <p class="hint">
+      La IA genera el análisis; usted escribe medicamentos y rutinas con su criterio médico.
+      Guarde en la tablet y descargue copia HTML o PDF a su PC.
+    </p>
+  </div>
+
+  <div class="card" id="pinCard">
+    <label>PIN de la tablet</label>
+    <input class="pin-box" id="pin" type="password" inputmode="numeric" maxlength="4" placeholder="••••"/>
+    <button type="button" id="loadBtn">Cargar informes</button>
+    <p class="err" id="loadErr"></p>
+  </div>
+
+  <div class="card hidden" id="listCard">
+    <h2>Informes recientes (<span id="count">0</span>)</h2>
+    <div id="list"></div>
+  </div>
+
+  <div class="card hidden" id="editCard">
+    <button type="button" class="ghost" id="backBtn" style="width:auto;margin-top:0">← Volver a la lista</button>
+    <h2 id="editTitle">Informe</h2>
+    <p class="hint" id="editMeta"></p>
+
+    <h2>Análisis IA (solo lectura)</h2>
+    <label>Resumen</label>
+    <textarea class="readonly" id="overview" readonly></textarea>
+    <label>Sugerencias automáticas de la app (no clínicas — referencia)</label>
+    <textarea class="readonly" id="aiRecs" readonly></textarea>
+    <div id="metrics"></div>
+
+    <h2 style="margin-top:20px">Su criterio médico (editable)</h2>
+    <label>Medicamentos / tratamiento farmacológico</label>
+    <textarea id="medicamentos" placeholder="Ej.: Tretinoína 0.025% noche, SPF 50+ día…"></textarea>
+    <label>Rutinas y cuidados</label>
+    <textarea id="rutinas" placeholder="Ej.: Limpieza suave AM/PM, vitamina C, hidratante…"></textarea>
+    <label>Observaciones adicionales</label>
+    <textarea id="observaciones" placeholder="Notas para el paciente o seguimiento…"></textarea>
+
+    <div class="row">
+      <button type="button" id="saveBtn">Guardar en tablet</button>
+      <button type="button" class="secondary" id="dlHtmlBtn">Descargar HTML</button>
+      <button type="button" class="secondary" id="dlPdfBtn">Descargar PDF</button>
+    </div>
+    <p class="err" id="saveErr"></p>
+    <p class="ok" id="saveOk"></p>
+  </div>
+
+<script>
+let reports = [];
+let currentId = null;
+
+function fmtDate(ms) {
+  return new Date(ms).toLocaleString('es-ES', { dateStyle: 'short', timeStyle: 'short' });
+}
+
+function pinValue() {
+  return document.getElementById('pin').value.trim();
+}
+
+function requirePin() {
+  const pin = pinValue();
+  if (!/^\d{4}$/.test(pin)) throw new Error('Ingrese el PIN de 4 dígitos de la tablet.');
+  return pin;
+}
+
+async function loadReports() {
+  loadErr.textContent = '';
+  const pin = requirePin();
+  loadBtn.disabled = true;
+  try {
+    const res = await fetch('/api/informes', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pin })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error');
+    reports = data.items || [];
+    count.textContent = reports.length;
+    list.innerHTML = reports.map(r =>
+      '<div class="list-item" data-id="' + r.id + '">' +
+      '<div><strong>' + esc(r.patientName) + '</strong><br/>' +
+      '<span class="meta">' + fmtDate(r.createdAt) + ' · edad cutánea ' + r.skinAge +
+      (r.hasDoctorNotes ? ' · <span class="badge">con sus notas</span>' : '') + '</span></div>' +
+      '<div>›</div></div>'
+    ).join('') || '<p class="hint">No hay informes todavía.</p>';
+    list.querySelectorAll('[data-id]').forEach(el => el.onclick = () => openReport(+el.dataset.id));
+    listCard.classList.remove('hidden');
+    editCard.classList.add('hidden');
+  } catch (e) {
+    loadErr.textContent = e.message || 'No se pudo cargar';
+  } finally {
+    loadBtn.disabled = false;
+  }
+}
+
+async function openReport(id) {
+  saveErr.textContent = ''; saveOk.textContent = '';
+  const pin = requirePin();
+  try {
+    const res = await fetch('/api/informe/' + id + '?pin=' + encodeURIComponent(pin));
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error');
+    currentId = id;
+    editTitle.textContent = data.patientName;
+    editMeta.textContent = fmtDate(data.createdAt) + ' · ' + data.patientSex + ' · ' +
+      data.patientAge + ' años · tipo ' + data.skinType + ' · motor ' + data.analysisEngine;
+    overview.value = data.overview || '';
+    aiRecs.value = data.aiRecommendations || '';
+    medicamentos.value = data.medicamentos || '';
+    rutinas.value = data.rutinas || '';
+    observaciones.value = data.observaciones || '';
+    metrics.innerHTML = '<h2 style="margin-top:16px">Indicadores</h2>' +
+      (data.metrics || []).map(m =>
+        '<div class="metric"><strong>' + esc(m.name) + '</strong> (' + esc(m.layer) + ')<br/>' +
+        '<span class="meta">nivel ' + m.levelValue + ' (' + esc(m.levelLabel) + ') · medida ' +
+        Number(m.score).toFixed(1) + '</span><br/>' + esc(m.recommendation) + '</div>'
+      ).join('');
+    listCard.classList.add('hidden');
+    editCard.classList.remove('hidden');
+    window.scrollTo(0, 0);
+  } catch (e) {
+    loadErr.textContent = e.message || 'No se pudo abrir el informe';
+  }
+}
+
+async function saveReport() {
+  saveErr.textContent = ''; saveOk.textContent = '';
+  if (!currentId) return;
+  const pin = requirePin();
+  saveBtn.disabled = true;
+  try {
+    const res = await fetch('/api/informe/' + currentId + '/recomendaciones', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        pin,
+        medicamentos: medicamentos.value,
+        rutinas: rutinas.value,
+        observaciones: observaciones.value
+      })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Error');
+    saveOk.textContent = 'Guardado en la tablet. Puede descargar HTML/PDF o seguir editando.';
+    const row = reports.find(r => r.id === currentId);
+    if (row) row.hasDoctorNotes = true;
+  } catch (e) {
+    saveErr.textContent = e.message || 'No se pudo guardar';
+  } finally {
+    saveBtn.disabled = false;
+  }
+}
+
+function download(kind) {
+  if (!currentId) return;
+  try {
+    const pin = requirePin();
+    window.location.href = '/api/informe/' + currentId + '/' + kind + '?pin=' + encodeURIComponent(pin);
+  } catch (e) {
+    saveErr.textContent = e.message;
+  }
+}
+
+function esc(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadBtn.onclick = loadReports;
+backBtn.onclick = () => { editCard.classList.add('hidden'); listCard.classList.remove('hidden'); };
+saveBtn.onclick = saveReport;
+dlHtmlBtn.onclick = () => download('html');
+dlPdfBtn.onclick = () => download('pdf');
+
+const params = new URLSearchParams(location.search);
+if (params.get('sessionId')) {
+  loadReports().then(() => openReport(+params.get('sessionId'))).catch(() => {});
+}
+</script>
+</body>
+</html>

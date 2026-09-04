@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="mlh_ink">#141414</color>
+    <color name="mlh_paper">#F5F5F3</color>
+    <color name="mlh_cream">#EDEAE4</color>
+    <color name="mlh_accent">#1F4B3F</color>
+    <color name="mlh_accent_soft">#2F6B5A</color>
+    <color name="mlh_gold">#A67C52</color>
+    <color name="mlh_level1">#2E9E6A</color>
+    <color name="mlh_level2">#3A7BD5</color>
+    <color name="mlh_level3">#D4A017</color>
+    <color name="mlh_level4">#E07A3D</color>
+    <color name="mlh_level5">#C0392B</color>
+</resources>

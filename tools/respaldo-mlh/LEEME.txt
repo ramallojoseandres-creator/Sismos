@@ -1,0 +1,46 @@
+================================================================================
+  MLH Skin Analyzer — Respaldo desde la tablet (PC)
+  Use ESTO antes de borrar la app vieja.
+================================================================================
+
+POR QUÉ NO SIRVE UNA APP NUEVA EN LA TABLET
+-------------------------------------------
+Android no deja instalar la actualización encima (firma distinta).
+Una app Android nueva TAMPOCO puede leer los pacientes de la vieja.
+La única forma sencilla de sacar los datos DE LA APP ACTUAL es
+con el PC + cable USB (ADB).
+
+QUÉ NECESITA
+------------
+1. Cable USB tablet ↔ PC
+2. En la tablet: Ajustes → Opciones de desarrollador → Depuración USB = ON
+   (Si no ve "Opciones de desarrollador": pulse 7 veces en "Número de compilación")
+3. Este folder en el PC
+4. Android Platform Tools (adb):
+   https://developer.android.com/tools/releases/platform-tools
+   Descargue, descomprima y copie adb.exe (y DLLs) DENTRO de esta carpeta
+   O agréguelos al PATH.
+
+PASOS (EN ESTE ORDEN)
+---------------------
+1) Conecte la tablet. Acepte "¿Permitir depuración USB?" en la tablet.
+2) Doble clic en:  1-RESPALDAR.bat
+   → Se crea la carpeta "copia" con pacientes, informes y fotos.
+   → NO desinstale todavía si el respaldo falló.
+3) Doble clic en:  2-INSTALAR-NUEVA.bat
+   → Le pedirá la ruta del APK nuevo (v1.9.1 o superior).
+   → Desinstala la vieja e instala la nueva.
+4) Doble clic en:  3-RESTAURAR.bat
+   → Vuelve a meter los datos en la app nueva.
+5) Abra la app en la tablet → Pacientes. Deben estar todos.
+
+Mac / Linux: use los scripts .sh iguales (1-respaldar.sh, etc.)
+
+SI FALLA "run-as" O "not debuggable"
+------------------------------------
+Use el modo alternativo (Android Backup):
+  1-RESPALDAR.bat  → elige modo B cuando se lo pida
+  En la tablet pulse "Hacer copia de seguridad" / "Back up my data"
+  3-RESTAURAR.bat  → modo B → en la tablet pulse "Restaurar"
+
+================================================================================

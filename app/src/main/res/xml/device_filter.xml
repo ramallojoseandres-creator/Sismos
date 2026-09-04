@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- MJ-008 analyzer USB3.0 (field unit vid=3804 pid=12416) -->
+    <usb-device vendor-id="3804" product-id="12416" />
+    <!-- Generic UVC video class (Dual USB camera firmwares) -->
+    <usb-device class="14" subclass="1" protocol="0" />
+    <usb-device class="14" subclass="2" protocol="0" />
+</resources>
